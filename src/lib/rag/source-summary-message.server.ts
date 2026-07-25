@@ -2,7 +2,12 @@ import { eq } from "drizzle-orm";
 
 import { db } from "#/db/index.ts";
 import { messages, type MessageCitation } from "#/db/schema/messages.ts";
+import { notebooks } from "#/db/schema/notebooks.ts";
 import { sources } from "#/db/schema/sources.ts";
+import {
+  notebookDescriptionFromSummary,
+  shouldAutoUpdateNotebookDescription,
+} from "#/lib/notebook-title.ts";
 import { generateSourceAddedSummary } from "#/lib/rag/llm.ts";
 import { formatVttTimestamp } from "#/lib/rag/parse-vtt.server.ts";
 
@@ -114,7 +119,57 @@ export async function postSourceAddedSummaryMessage(options: {
     })
     .where(eq(sources.id, sourceId));
 
+  await maybeUpdateNotebookDescription({
+    notebookId,
+    sourceTitle: source.title,
+    sourceType,
+    summary,
+  });
+
   return message.id;
+}
+
+/** Set a topic blurb on the notebook card — never a copy of the title. */
+async function maybeUpdateNotebookDescription(options: {
+  notebookId: string;
+  sourceTitle: string;
+  sourceType: string;
+  summary: string;
+}) {
+  const { notebookId, sourceTitle, sourceType, summary } = options;
+
+  const [notebook] = await db
+    .select({
+      title: notebooks.title,
+      description: notebooks.description,
+    })
+    .from(notebooks)
+    .where(eq(notebooks.id, notebookId))
+    .limit(1);
+
+  if (!notebook) return;
+
+  if (
+    !shouldAutoUpdateNotebookDescription(notebook.description, notebook.title)
+  ) {
+    return;
+  }
+
+  const next = notebookDescriptionFromSummary(
+    summary,
+    sourceTitle,
+    sourceType,
+  );
+  if (!next || next === notebook.title.trim()) return;
+  if (next === (notebook.description ?? "").trim()) return;
+
+  await db
+    .update(notebooks)
+    .set({
+      description: next,
+      updatedAt: new Date(),
+    })
+    .where(eq(notebooks.id, notebookId));
 }
 
 function excerptLabel(locator: MessageCitation["locator"]): string | undefined {

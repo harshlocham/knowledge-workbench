@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { LoaderCircle } from "lucide-react";
-import * as pdfjs from "pdfjs-dist";
-import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-
 import { getSourceFile } from "#/features/sources/sources.functions.ts";
 
 import { HighlightedText } from "./highlighted-text.tsx";
@@ -14,7 +11,18 @@ import {
 } from "./pdf-text-highlight.ts";
 import type { ViewerHighlight, ViewerPage } from "./types.ts";
 
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
+let pdfJsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
+
+function loadPdfJs() {
+  pdfJsPromise ??= Promise.all([
+    import("pdfjs-dist"),
+    import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
+  ]).then(([pdfjs, workerMod]) => {
+    pdfjs.GlobalWorkerOptions.workerSrc = workerMod.default;
+    return pdfjs;
+  });
+  return pdfJsPromise;
+}
 
 type HighlightRect = {
   left: number;
@@ -94,14 +102,17 @@ export function PdfViewer({
     if (!pdfData) return;
 
     let cancelled = false;
-    let renderTask: pdfjs.RenderTask | null = null;
-    let loadingTask: pdfjs.PDFDocumentLoadingTask | null = null;
+    let renderTask: { cancel: () => void } | null = null;
+    let loadingTask: { destroy: () => Promise<unknown> } | null = null;
 
     async function renderPage() {
       setRendering(true);
       setFileError(null);
 
       try {
+        const pdfjs = await loadPdfJs();
+        if (cancelled) return;
+
         // Copy buffer — pdf.js may transfer/detach the underlying ArrayBuffer
         loadingTask = pdfjs.getDocument({ data: pdfData!.slice() });
         const doc = await loadingTask.promise;

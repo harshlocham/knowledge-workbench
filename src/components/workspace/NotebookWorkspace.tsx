@@ -56,8 +56,11 @@ import {
   INGEST_LIMITS,
 } from "#/lib/ingest/limits.ts";
 import {
+  deriveNotebookDescriptionFromSources,
   deriveNotebookTitleFromSources,
+  isEmptyNotebookDescription,
   isUntitledNotebookTitle,
+  shouldAutoUpdateNotebookDescription,
 } from "#/lib/notebook-title.ts";
 
 function isPendingStatus(status: SourceDTO["status"]) {
@@ -104,6 +107,9 @@ export function NotebookWorkspace({
   const [mobileSourcesOpen, setMobileSourcesOpen] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const autoTitleEnabledRef = useRef(isUntitledNotebookTitle(notebook.title));
+  const autoDescriptionEnabledRef = useRef(
+    isEmptyNotebookDescription(notebook.description),
+  );
   const titleSyncInFlightRef = useRef(false);
   const readySourceIdsRef = useRef(
     new Set(
@@ -138,6 +144,9 @@ export function NotebookWorkspace({
     if (isUntitledNotebookTitle(notebook.title)) {
       autoTitleEnabledRef.current = true;
     }
+    if (isEmptyNotebookDescription(notebook.description)) {
+      autoDescriptionEnabledRef.current = true;
+    }
   }, [notebook]);
 
   useEffect(() => {
@@ -154,22 +163,43 @@ export function NotebookWorkspace({
     }
   }, [sources.length]);
 
-  // While the notebook is still auto-managed (created as Untitled and not
-  // manually renamed), keep the title in sync with source titles — including
-  // upgrades when URL/YouTube indexing fills in a better name.
   useEffect(() => {
-    if (!autoTitleEnabledRef.current || titleSyncInFlightRef.current) {
+    if (titleSyncInFlightRef.current) {
       return;
     }
 
-    const nextTitle = deriveNotebookTitleFromSources(sources);
-    if (!nextTitle || nextTitle === notebookState.title) {
+    const nextTitle = autoTitleEnabledRef.current
+      ? deriveNotebookTitleFromSources(sources)
+      : null;
+    const canAutoDescription =
+      autoDescriptionEnabledRef.current &&
+      shouldAutoUpdateNotebookDescription(
+        notebookState.description,
+        notebookState.title,
+      );
+    const nextDescription = canAutoDescription
+      ? deriveNotebookDescriptionFromSources(sources)
+      : null;
+
+    const titleChanged =
+      Boolean(nextTitle) && nextTitle !== notebookState.title;
+    // Never mirror the title into description.
+    const descriptionChanged =
+      Boolean(nextDescription) &&
+      nextDescription !== (notebookState.description ?? "") &&
+      nextDescription !== notebookState.title;
+
+    if (!titleChanged && !descriptionChanged) {
       return;
     }
 
     titleSyncInFlightRef.current = true;
     void updateNotebookFn({
-      data: { id: notebookState.id, title: nextTitle },
+      data: {
+        id: notebookState.id,
+        ...(titleChanged ? { title: nextTitle! } : {}),
+        ...(descriptionChanged ? { description: nextDescription! } : {}),
+      },
     })
       .then((updated) => {
         setNotebookState(updated);
@@ -179,7 +209,14 @@ export function NotebookWorkspace({
       .finally(() => {
         titleSyncInFlightRef.current = false;
       });
-  }, [sources, notebookState.id, notebookState.title, updateNotebookFn, router]);
+  }, [
+    sources,
+    notebookState.id,
+    notebookState.title,
+    notebookState.description,
+    updateNotebookFn,
+    router,
+  ]);
 
   const hasPendingSources = useMemo(
     () => sources.some((source) => isPendingStatus(source.status)),
