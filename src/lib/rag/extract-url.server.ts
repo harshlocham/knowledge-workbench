@@ -1,5 +1,5 @@
 import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
+import { parseHTML } from "linkedom";
 
 export type ExtractedUrlArticle = {
   title: string;
@@ -19,13 +19,16 @@ function normalizeUrl(input: string) {
 }
 
 function htmlToPlainText(html: string): { text: string; headings: string[] } {
-  const dom = new JSDOM(`<body>${html}</body>`);
-  const body = dom.window.document.body;
+  // linkedom needs a full document shell; a bare <body> fragment leaves content outside body.
+  const { document, Node } = parseHTML(
+    `<html><body>${html}</body></html>`,
+  );
+  const body = document.body;
   const headings: string[] = [];
   const parts: string[] = [];
 
   const walk = (node: Node) => {
-    if (node.nodeType === dom.window.Node.TEXT_NODE) {
+    if (node.nodeType === Node.TEXT_NODE) {
       const value = node.textContent?.replace(/\s+/g, " ").trim();
       if (value) {
         parts.push(value);
@@ -33,7 +36,7 @@ function htmlToPlainText(html: string): { text: string; headings: string[] } {
       return;
     }
 
-    if (node.nodeType !== dom.window.Node.ELEMENT_NODE) {
+    if (node.nodeType !== Node.ELEMENT_NODE) {
       return;
     }
 
@@ -120,10 +123,20 @@ export async function extractUrlArticle(
   }
 
   const html = await response.text();
-  const dom = new JSDOM(html, { url });
-  const document = dom.window.document;
+  const { document } = parseHTML(html);
+  // Readability uses document.baseURI for relative URL resolution.
+  Object.defineProperty(document, "baseURI", {
+    configurable: true,
+    value: url,
+  });
+  if (!document.documentURI) {
+    Object.defineProperty(document, "documentURI", {
+      configurable: true,
+      value: url,
+    });
+  }
 
-  const reader = new Readability(document);
+  const reader = new Readability(document as unknown as Document);
   const article = reader.parse();
 
   if (!article?.textContent?.trim() && !article?.content?.trim()) {
