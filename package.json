@@ -23,6 +23,7 @@
   "dependencies": {
     "@clerk/tanstack-react-start": "^1.4.21",
     "@faker-js/faker": "^10.3.0",
+    "@qdrant/js-client-rest": "^1.18.0",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/match-sorter-utils": "latest",
     "@tanstack/react-devtools": "latest",
@@ -39,6 +40,7 @@
     "drizzle-kit": "^0.31.9",
     "drizzle-orm": "^0.45.1",
     "lucide-react": "^0.577.0",
+    "openai": "^6.49.0",
     "pg": "^8.16.3",
     "radix-ui": "^1.6.5",
     "react": "^19.2.0",

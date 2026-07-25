@@ -10,33 +10,65 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
+import { Route as AuthenticatedNotebooksIndexRouteImport } from './routes/_authenticated/notebooks/index'
+import { Route as AuthenticatedNotebooksNotebookIdRouteImport } from './routes/_authenticated/notebooks/$notebookId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedRoute = AuthenticatedRouteImport.update({
+  id: '/_authenticated',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedNotebooksIndexRoute =
+  AuthenticatedNotebooksIndexRouteImport.update({
+    id: '/notebooks/',
+    path: '/notebooks/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedNotebooksNotebookIdRoute =
+  AuthenticatedNotebooksNotebookIdRouteImport.update({
+    id: '/notebooks/$notebookId',
+    path: '/notebooks/$notebookId',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/notebooks/$notebookId': typeof AuthenticatedNotebooksNotebookIdRoute
+  '/notebooks/': typeof AuthenticatedNotebooksIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/notebooks/$notebookId': typeof AuthenticatedNotebooksNotebookIdRoute
+  '/notebooks': typeof AuthenticatedNotebooksIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_authenticated': typeof AuthenticatedRouteWithChildren
+  '/_authenticated/notebooks/$notebookId': typeof AuthenticatedNotebooksNotebookIdRoute
+  '/_authenticated/notebooks/': typeof AuthenticatedNotebooksIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/notebooks/$notebookId' | '/notebooks/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/notebooks/$notebookId' | '/notebooks'
+  id:
+    | '__root__'
+    | '/'
+    | '/_authenticated'
+    | '/_authenticated/notebooks/$notebookId'
+    | '/_authenticated/notebooks/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +80,47 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/notebooks/': {
+      id: '/_authenticated/notebooks/'
+      path: '/notebooks'
+      fullPath: '/notebooks/'
+      preLoaderRoute: typeof AuthenticatedNotebooksIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/notebooks/$notebookId': {
+      id: '/_authenticated/notebooks/$notebookId'
+      path: '/notebooks/$notebookId'
+      fullPath: '/notebooks/$notebookId'
+      preLoaderRoute: typeof AuthenticatedNotebooksNotebookIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
   }
 }
 
+interface AuthenticatedRouteChildren {
+  AuthenticatedNotebooksNotebookIdRoute: typeof AuthenticatedNotebooksNotebookIdRoute
+  AuthenticatedNotebooksIndexRoute: typeof AuthenticatedNotebooksIndexRoute
+}
+
+const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
+  AuthenticatedNotebooksNotebookIdRoute: AuthenticatedNotebooksNotebookIdRoute,
+  AuthenticatedNotebooksIndexRoute: AuthenticatedNotebooksIndexRoute,
+}
+
+const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
+  AuthenticatedRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuthenticatedRoute: AuthenticatedRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

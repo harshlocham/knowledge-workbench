@@ -16,8 +16,10 @@ export const messageRoleEnum = pgEnum("message_role", ["user", "assistant"]);
 export type MessageCitation = {
   chunkId: string;
   sourceId: string;
+  sourceTitle?: string;
   quote?: string;
   locator?: ChunkLocator;
+  citationNumber?: number;
 };
 
 export const messages = pgTable(
