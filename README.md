@@ -28,7 +28,6 @@ NotebookLM-style research assistant: create notebooks, add sources (PDF, text, w
 bun install
 cp .env.example .env.local
 # Fill in Clerk + OPENAI_API_KEY (DATABASE_URL / QDRANT_URL defaults match compose)
-bun run docker:deps
 bun run db:migrate
 bun run dev
 ```
@@ -42,17 +41,9 @@ Runs the app container with Postgres, Qdrant, migrations on boot, and a persiste
 ```bash
 cp .env.example .env
 # Fill VITE_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY, OPENAI_API_KEY
-bun run docker:up
-# or: docker compose --profile app up --build -d
+docker compose --profile app up --build -d
 ```
-
 App: [http://localhost:3000](http://localhost:3000)
-
-```bash
-bun run docker:logs   # follow app logs
-bun run docker:down   # stop stack
-```
-
 Compose wires `DATABASE_URL` / `QDRANT_URL` to the internal services. Set `S3_*` in `.env` if you want object storage instead of the uploads volume.
 
 Build a standalone image:
@@ -70,9 +61,6 @@ docker build \
 | `bun run dev` | Dev server (port 3000) |
 | `bun run build` | Production build (Nitro Bun → `.output`) |
 | `bun run start` | Run production server |
-| `bun run docker:deps` | Start Postgres + Qdrant only |
-| `bun run docker:up` | Build/run full stack (app profile) |
-| `bun run docker:down` | Stop full stack |
 | `bun run check` | Biome lint + format |
 | `bun run db:generate` | Generate Drizzle migrations |
 | `bun run db:migrate` | Apply migrations |
