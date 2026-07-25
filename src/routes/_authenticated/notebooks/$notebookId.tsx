@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   FileText,
   LoaderCircle,
+  Map,
+  MessageSquare,
   Plus,
   RefreshCw,
   Send,
@@ -12,6 +14,7 @@ import {
   Upload,
 } from "lucide-react";
 
+import { LearningRoadmapPanel } from "#/components/notebook/learning-roadmap-panel.tsx";
 import {
   SourceViewerPanel,
   type CitationNavItem,
@@ -29,6 +32,10 @@ import {
   type ChatMessageDTO,
 } from "#/features/chat/chat.functions.ts";
 import { getNotebook } from "#/features/notebooks/notebooks.functions.ts";
+import {
+  buildLearningRoadmap,
+  type LearningRoadmap,
+} from "#/features/roadmap/roadmap.functions.ts";
 import {
   createPdfSource,
   createTextSource,
@@ -134,9 +141,15 @@ function NotebookWorkspacePage() {
   const listSourcesFn = useServerFn(listSources);
   const askNotebookFn = useServerFn(askNotebook);
   const getSourceViewerFn = useServerFn(getSourceViewer);
+  const buildLearningRoadmapFn = useServerFn(buildLearningRoadmap);
 
   const [sources, setSources] = useState(initialSources);
   const [messages, setMessages] = useState(initialMessages);
+  const [centerMode, setCenterMode] = useState<"chat" | "roadmap">("chat");
+  const [roadmap, setRoadmap] = useState<LearningRoadmap | null>(null);
+  const [roadmapFocus, setRoadmapFocus] = useState("");
+  const [isGeneratingRoadmap, setIsGeneratingRoadmap] = useState(false);
+  const [roadmapError, setRoadmapError] = useState<string | null>(null);
   const [addMode, setAddMode] = useState<
     "text" | "pdf" | "url" | "vtt" | "youtube"
   >("text");
@@ -202,6 +215,14 @@ function NotebookWorkspacePage() {
     [sources],
   );
 
+  const youtubeReadyCount = useMemo(
+    () =>
+      sources.filter(
+        (source) => source.type === "youtube" && source.status === "ready",
+      ).length,
+    [sources],
+  );
+
   async function loadViewer(options: {
     sourceId: string;
     chunkId?: string;
@@ -255,6 +276,36 @@ function NotebookWorkspacePage() {
     setCitationNav([]);
     setActiveCitationKey(null);
     await loadViewer({ sourceId });
+  }
+
+  async function openRoadmapClip(citation: MessageCitation) {
+    const key = citationKey("roadmap", citation);
+    setCitationNav([{ ...citation, key }]);
+    setActiveCitationKey(key);
+    await loadViewer({
+      sourceId: citation.sourceId,
+      chunkId: citation.chunkId,
+    });
+  }
+
+  async function handleGenerateRoadmap() {
+    setRoadmapError(null);
+    setIsGeneratingRoadmap(true);
+    try {
+      const next = await buildLearningRoadmapFn({
+        data: {
+          notebookId: notebook.id,
+          focus: roadmapFocus.trim() || undefined,
+        },
+      });
+      setRoadmap(next);
+    } catch (err) {
+      setRoadmapError(
+        err instanceof Error ? err.message : "Failed to generate roadmap",
+      );
+    } finally {
+      setIsGeneratingRoadmap(false);
+    }
   }
 
   async function handleAddSource(event: React.FormEvent) {
@@ -716,133 +767,181 @@ function NotebookWorkspacePage() {
           </div>
         </aside>
 
-        {/* Chat */}
+        {/* Chat / Roadmap */}
         <section className="flex min-h-0 flex-col bg-[color-mix(in_oklab,var(--foam)_70%,transparent)]">
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-            {messages.length === 0 ? (
-              <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center text-center">
-                <h2 className="font-[Fraunces,serif] text-2xl font-semibold text-[var(--sea-ink)]">
-                  Ask this notebook
-                </h2>
-                <p className="mt-2 text-sm text-[var(--sea-ink-soft)]">
-                  Answers are grounded in your sources and always include
-                  citations you can open.
-                </p>
-              </div>
-            ) : (
-              <div className="mx-auto flex max-w-3xl flex-col gap-4">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={
-                      message.role === "user"
-                        ? "ml-auto max-w-[85%] rounded-2xl bg-[var(--sea-ink)] px-4 py-3 text-sm text-white"
-                        : "mr-auto max-w-[90%] rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--sea-ink)] shadow-sm"
-                    }
-                  >
-                    {message.role === "assistant" ? (
-                      <div className="whitespace-pre-wrap leading-relaxed">
-                        {renderAnswerWithCitations(
-                          message.content,
-                          message.citations,
-                          message.id,
-                          activeCitationKey,
-                          openCitation,
-                        )}
-                      </div>
-                    ) : (
-                      <p className="whitespace-pre-wrap leading-relaxed">
-                        {message.content}
-                      </p>
-                    )}
-
-                    {message.role === "assistant" &&
-                    message.citations.length > 0 ? (
-                      <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[var(--line)] pt-3">
-                        {message.citations.map((citation) => {
-                          const key = citationKey(message.id, citation);
-                          const isActive = activeCitationKey === key;
-                          return (
-                            <button
-                              key={key}
-                              type="button"
-                              onClick={() => openCitation(citation, message.id)}
-                              className={
-                                isActive
-                                  ? "rounded-full bg-[color-mix(in_oklab,var(--lagoon)_22%,transparent)] px-2.5 py-1 text-xs font-medium text-[var(--sea-ink)] ring-2 ring-[var(--lagoon)] transition"
-                                  : "rounded-full bg-[var(--chip-bg)] px-2.5 py-1 text-xs font-medium text-[var(--sea-ink-soft)] ring-1 ring-[var(--chip-line)] transition hover:text-[var(--sea-ink)]"
-                              }
-                            >
-                              [{citation.citationNumber}]{" "}
-                              {citation.sourceTitle ?? "Source"}
-                              {citation.locator?.page != null
-                                ? ` · p.${citation.locator.page}`
-                                : ""}
-                              {citation.locator?.tStart != null
-                                ? ` · ${Math.floor(citation.locator.tStart / 60)}:${String(
-                                    Math.floor(citation.locator.tStart % 60),
-                                  ).padStart(2, "0")}`
-                                : ""}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-                {isAsking ? (
-                  <div className="mr-auto inline-flex items-center gap-2 rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--sea-ink-soft)]">
-                    <LoaderCircle className="size-4 animate-spin" />
-                    Searching sources…
-                  </div>
-                ) : null}
-                <div ref={chatEndRef} />
-              </div>
-            )}
+          <div className="flex items-center gap-1 border-b border-[var(--line)] px-4 py-2">
+            <button
+              type="button"
+              onClick={() => setCenterMode("chat")}
+              className={
+                centerMode === "chat"
+                  ? "inline-flex items-center gap-1.5 rounded-lg bg-[color-mix(in_oklab,var(--lagoon)_18%,transparent)] px-3 py-1.5 text-sm font-medium text-[var(--sea-ink)]"
+                  : "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+              }
+            >
+              <MessageSquare className="size-3.5" />
+              Chat
+            </button>
+            <button
+              type="button"
+              onClick={() => setCenterMode("roadmap")}
+              className={
+                centerMode === "roadmap"
+                  ? "inline-flex items-center gap-1.5 rounded-lg bg-[color-mix(in_oklab,var(--lagoon)_18%,transparent)] px-3 py-1.5 text-sm font-medium text-[var(--sea-ink)]"
+                  : "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]"
+              }
+            >
+              <Map className="size-3.5" />
+              Learn
+            </button>
           </div>
 
-          <form
-            onSubmit={handleAsk}
-            className="border-t border-[var(--line)] bg-[var(--surface-strong)] px-4 py-3 sm:px-6"
-          >
-            {chatError ? (
-              <p className="mb-2 text-sm text-destructive" role="alert">
-                {chatError}
-              </p>
-            ) : null}
-            <div className="mx-auto flex max-w-3xl gap-2">
-              <Textarea
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder={
-                  readyCount > 0
-                    ? "Ask a question about your sources…"
-                    : "Add a ready source before asking…"
-                }
-                rows={2}
-                className="min-h-[44px] resize-none"
-                disabled={isAsking}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void handleAsk(event as unknown as React.FormEvent);
-                  }
-                }}
+          {centerMode === "roadmap" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+              <LearningRoadmapPanel
+                youtubeReadyCount={youtubeReadyCount}
+                focus={roadmapFocus}
+                onFocusChange={setRoadmapFocus}
+                roadmap={roadmap}
+                isGenerating={isGeneratingRoadmap}
+                error={roadmapError}
+                onGenerate={() => void handleGenerateRoadmap()}
+                onOpenClip={(citation) => void openRoadmapClip(citation)}
               />
-              <Button
-                type="submit"
-                size="icon-lg"
-                disabled={isAsking || !question.trim()}
-                aria-label="Send question"
-              >
-                {isAsking ? (
-                  <LoaderCircle className="animate-spin" />
-                ) : (
-                  <Send />
-                )}
-              </Button>
             </div>
-          </form>
+          ) : (
+            <>
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+                {messages.length === 0 ? (
+                  <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center text-center">
+                    <h2 className="font-[Fraunces,serif] text-2xl font-semibold text-[var(--sea-ink)]">
+                      Ask this notebook
+                    </h2>
+                    <p className="mt-2 text-sm text-[var(--sea-ink-soft)]">
+                      Answers are grounded in your sources and always include
+                      citations you can open.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mx-auto flex max-w-3xl flex-col gap-4">
+                    {messages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={
+                          message.role === "user"
+                            ? "ml-auto max-w-[85%] rounded-2xl bg-[var(--sea-ink)] px-4 py-3 text-sm text-white"
+                            : "mr-auto max-w-[90%] rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--sea-ink)] shadow-sm"
+                        }
+                      >
+                        {message.role === "assistant" ? (
+                          <div className="whitespace-pre-wrap leading-relaxed">
+                            {renderAnswerWithCitations(
+                              message.content,
+                              message.citations,
+                              message.id,
+                              activeCitationKey,
+                              openCitation,
+                            )}
+                          </div>
+                        ) : (
+                          <p className="whitespace-pre-wrap leading-relaxed">
+                            {message.content}
+                          </p>
+                        )}
+
+                        {message.role === "assistant" &&
+                        message.citations.length > 0 ? (
+                          <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[var(--line)] pt-3">
+                            {message.citations.map((citation) => {
+                              const key = citationKey(message.id, citation);
+                              const isActive = activeCitationKey === key;
+                              return (
+                                <button
+                                  key={key}
+                                  type="button"
+                                  onClick={() =>
+                                    openCitation(citation, message.id)
+                                  }
+                                  className={
+                                    isActive
+                                      ? "rounded-full bg-[color-mix(in_oklab,var(--lagoon)_22%,transparent)] px-2.5 py-1 text-xs font-medium text-[var(--sea-ink)] ring-2 ring-[var(--lagoon)] transition"
+                                      : "rounded-full bg-[var(--chip-bg)] px-2.5 py-1 text-xs font-medium text-[var(--sea-ink-soft)] ring-1 ring-[var(--chip-line)] transition hover:text-[var(--sea-ink)]"
+                                  }
+                                >
+                                  [{citation.citationNumber}]{" "}
+                                  {citation.sourceTitle ?? "Source"}
+                                  {citation.locator?.page != null
+                                    ? ` · p.${citation.locator.page}`
+                                    : ""}
+                                  {citation.locator?.tStart != null
+                                    ? ` · ${Math.floor(citation.locator.tStart / 60)}:${String(
+                                        Math.floor(
+                                          citation.locator.tStart % 60,
+                                        ),
+                                      ).padStart(2, "0")}`
+                                    : ""}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                    {isAsking ? (
+                      <div className="mr-auto inline-flex items-center gap-2 rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--sea-ink-soft)]">
+                        <LoaderCircle className="size-4 animate-spin" />
+                        Searching sources…
+                      </div>
+                    ) : null}
+                    <div ref={chatEndRef} />
+                  </div>
+                )}
+              </div>
+
+              <form
+                onSubmit={handleAsk}
+                className="border-t border-[var(--line)] bg-[var(--surface-strong)] px-4 py-3 sm:px-6"
+              >
+                {chatError ? (
+                  <p className="mb-2 text-sm text-destructive" role="alert">
+                    {chatError}
+                  </p>
+                ) : null}
+                <div className="mx-auto flex max-w-3xl gap-2">
+                  <Textarea
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    placeholder={
+                      readyCount > 0
+                        ? "Ask a question about your sources…"
+                        : "Add a ready source before asking…"
+                    }
+                    rows={2}
+                    className="min-h-[44px] resize-none"
+                    disabled={isAsking}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void handleAsk(event as unknown as React.FormEvent);
+                      }
+                    }}
+                  />
+                  <Button
+                    type="submit"
+                    size="icon-lg"
+                    disabled={isAsking || !question.trim()}
+                    aria-label="Send question"
+                  >
+                    {isAsking ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <Send />
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </>
+          )}
         </section>
 
         {/* Viewer */}
