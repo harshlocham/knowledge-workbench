@@ -1,27 +1,16 @@
+import { TopNavigation } from "#/components/layout/TopNavigation.tsx";
+import { Button } from "#/components/ui/button.tsx";
 import { Link } from "@tanstack/react-router";
 
-import HeaderUser from "#/integrations/clerk/header-user.tsx";
-
+/** Legacy header used on marketing/home; dashboard uses TopNavigation directly. */
 export function AppHeader() {
   return (
-    <header className="sticky top-0 z-20 border-b border-[var(--line)] bg-[var(--header-bg)] backdrop-blur-md">
-      <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
-        <Link
-          to="/"
-          className="font-[Fraunces,serif] text-lg font-semibold tracking-tight text-[var(--sea-ink)]"
-        >
-          Knowledge Workbench
-        </Link>
-        <div className="flex items-center gap-3">
-          <Link
-            to="/notebooks"
-            className="text-sm font-medium text-[var(--sea-ink-soft)] transition-colors hover:text-[var(--sea-ink)]"
-          >
-            Notebooks
-          </Link>
-          <HeaderUser />
-        </div>
-      </div>
-    </header>
+    <TopNavigation
+      actions={
+        <Button asChild variant="ghost" size="sm">
+          <Link to="/notebooks">Notebooks</Link>
+        </Button>
+      }
+    />
   );
 }

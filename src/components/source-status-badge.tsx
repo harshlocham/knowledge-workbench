@@ -9,12 +9,9 @@ const STATUS_LABEL: Record<SourceDTO["status"], string> = {
 };
 
 const STATUS_CLASS: Record<SourceDTO["status"], string> = {
-  uploading:
-    "bg-amber-500/15 text-amber-800 ring-amber-500/25 dark:text-amber-200",
-  indexing:
-    "bg-[color-mix(in_oklab,var(--lagoon)_18%,transparent)] text-[var(--lagoon-deep)] ring-[color-mix(in_oklab,var(--lagoon)_30%,transparent)]",
-  ready:
-    "bg-[color-mix(in_oklab,var(--palm)_16%,transparent)] text-[var(--palm)] ring-[color-mix(in_oklab,var(--palm)_28%,transparent)]",
+  uploading: "bg-amber-500/10 text-amber-800 ring-amber-500/20",
+  indexing: "bg-accent text-primary ring-primary/20",
+  ready: "bg-emerald-500/10 text-emerald-800 ring-emerald-500/20",
   failed: "bg-destructive/10 text-destructive ring-destructive/20",
 };
 
@@ -28,7 +25,7 @@ export function SourceStatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset",
+        "inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset",
         STATUS_CLASS[status],
       )}
       title={progressLabel ?? STATUS_LABEL[status]}

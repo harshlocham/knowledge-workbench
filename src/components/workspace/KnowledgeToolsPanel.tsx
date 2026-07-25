@@ -1,0 +1,54 @@
+import { PanelHeader } from "#/components/layout/PanelHeader.tsx";
+import {
+  ViewerTabs,
+  type ToolsTab,
+} from "#/components/workspace/ViewerTabs.tsx";
+import type {
+  CitationNavItem,
+  ViewerSource,
+} from "#/components/notebook/source-viewer/types.ts";
+import type { MessageCitation } from "#/db/schema/messages.ts";
+import type { ChatMessageDTO } from "#/features/chat/chat.functions.ts";
+import type { NotebookDTO } from "#/features/notebooks/notebooks.functions.ts";
+import type { LearningRoadmap } from "#/features/roadmap/roadmap.functions.ts";
+import type { SourceDTO } from "#/features/sources/sources.functions.ts";
+import { cn } from "#/lib/utils.ts";
+
+export function KnowledgeToolsPanel({
+  className,
+  ...props
+}: {
+  tab: ToolsTab;
+  onTabChange: (tab: ToolsTab) => void;
+  notebook: NotebookDTO;
+  sources: SourceDTO[];
+  messages: ChatMessageDTO[];
+  viewer: ViewerSource | null;
+  viewerLoading: boolean;
+  citationNav: CitationNavItem[];
+  activeCitationKey: string | null;
+  onNavigateCitation: (citation: CitationNavItem) => void;
+  onCloseViewer: () => void;
+  selectedSource: SourceDTO | null;
+  youtubeReadyCount: number;
+  roadmapFocus: string;
+  onRoadmapFocusChange: (value: string) => void;
+  roadmap: LearningRoadmap | null;
+  isGeneratingRoadmap: boolean;
+  roadmapError: string | null;
+  onGenerateRoadmap: () => void;
+  onOpenClip: (citation: MessageCitation) => void;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex h-full min-h-0 flex-col bg-card", className)}>
+      <PanelHeader
+        title="Knowledge Tools"
+        description="Source viewer, summary, and learning path"
+      />
+      <div className="min-h-0 flex-1">
+        <ViewerTabs {...props} />
+      </div>
+    </div>
+  );
+}

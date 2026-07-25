@@ -1,6 +1,6 @@
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 
-import { AppHeader } from "#/components/app-header.tsx";
+import { TooltipProvider } from "#/components/ui/tooltip.tsx";
 import { getAuthSession } from "#/features/notebooks/notebooks.functions.ts";
 
 export const Route = createFileRoute("/_authenticated")({
@@ -18,11 +18,12 @@ export const Route = createFileRoute("/_authenticated")({
 
 function AuthenticatedLayout() {
   return (
-    <div className="flex min-h-dvh flex-col">
-      <AppHeader />
-      <main className="flex min-h-0 flex-1 flex-col">
-        <Outlet />
-      </main>
-    </div>
+    <TooltipProvider delayDuration={300}>
+      <div className="flex min-h-dvh flex-col bg-background">
+        <main className="flex min-h-0 flex-1 flex-col">
+          <Outlet />
+        </main>
+      </div>
+    </TooltipProvider>
   );
 }

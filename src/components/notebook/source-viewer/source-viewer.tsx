@@ -102,8 +102,8 @@ export function SourceViewer({
   if (!source && !loading) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-        <p className="text-sm font-medium text-[var(--sea-ink)]">Source viewer</p>
-        <p className="text-sm text-[var(--sea-ink-soft)]">
+        <p className="text-sm font-medium text-foreground">Source viewer</p>
+        <p className="text-sm text-muted-foreground">
           Select a citation or source to inspect the exact referenced location.
         </p>
       </div>
@@ -115,18 +115,18 @@ export function SourceViewer({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-start justify-between gap-3 border-b border-[var(--line)] px-4 py-3">
+      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-[var(--sea-ink)]">
+          <p className="truncate text-sm font-semibold text-foreground">
             {loading ? "Opening source…" : source?.title}
           </p>
           {source ? (
-            <p className="mt-0.5 truncate text-xs uppercase tracking-wide text-[var(--sea-ink-soft)]">
+            <p className="mt-0.5 truncate text-xs tracking-wide text-muted-foreground uppercase">
               {locationLabel(source)}
             </p>
           ) : null}
           {activeCitationKey && citations.length > 0 ? (
-            <p className="mt-1 text-xs text-[var(--palm)]">
+            <p className="mt-1 text-xs text-primary">
               Active citation {Math.max(activeIndex, 0) + 1} of {citations.length}
               {hasNav ? " · ↑↓ or J/K to navigate" : ""}
             </p>
@@ -192,8 +192,8 @@ export function SourceViewer({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {loading || !source ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-[var(--sea-ink-soft)]">
-            <LoaderCircle className="size-5 animate-spin text-[var(--lagoon-deep)]" />
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+            <LoaderCircle className="size-5 animate-spin text-primary" />
             Opening cited source…
           </div>
         ) : source.type === "pdf" ? (

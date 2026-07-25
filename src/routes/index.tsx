@@ -14,17 +14,17 @@ function HomePage() {
   const { userId } = Route.useLoaderData();
 
   return (
-    <div className="min-h-dvh">
+    <div className="min-h-dvh bg-background">
       <AppHeader />
       <main className="mx-auto flex max-w-5xl flex-col gap-10 px-4 py-16 sm:px-6">
         <div className="max-w-2xl">
-          <p className="text-sm font-medium tracking-wide text-[var(--kicker)] uppercase">
+          <p className="text-sm font-medium tracking-wide text-muted-foreground uppercase">
             Research assistant
           </p>
-          <h1 className="mt-2 font-[Fraunces,serif] text-4xl font-semibold tracking-tight text-[var(--sea-ink)] sm:text-5xl">
+          <h1 className="mt-2 font-[Fraunces,serif] text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
             Knowledge Workbench
           </h1>
-          <p className="mt-4 text-lg text-[var(--sea-ink-soft)]">
+          <p className="mt-4 text-lg text-muted-foreground">
             Upload sources into notebooks, ask grounded questions, and inspect
             citations back to the original material.
           </p>

@@ -35,20 +35,20 @@ export function LearningRoadmapPanel({
   onOpenClip,
 }: LearningRoadmapPanelProps) {
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div className="flex w-full flex-col gap-4">
+      <div className="flex flex-col gap-3">
         <div>
-          <h2 className="flex items-center gap-2 font-[Fraunces,serif] text-2xl font-semibold text-[var(--sea-ink)]">
-            <Map className="size-6 text-[var(--lagoon-deep)]" />
+          <h2 className="flex items-center gap-2 font-[Fraunces,serif] text-lg font-semibold text-foreground">
+            <Map className="size-4 text-primary" />
             Learning roadmap
           </h2>
-          <p className="mt-1 text-sm text-[var(--sea-ink-soft)]">
-            Personalized concept path from your YouTube sources, with deep links
-            into the exact clips.
+          <p className="mt-1 text-xs text-muted-foreground">
+            Personalized path from your YouTube sources with deep links into clips.
           </p>
         </div>
         <Button
           type="button"
+          size="sm"
           onClick={onGenerate}
           disabled={isGenerating || youtubeReadyCount === 0}
         >
@@ -63,10 +63,10 @@ export function LearningRoadmapPanel({
           id="roadmap-focus"
           value={focus}
           onChange={(e) => onFocusChange(e.target.value)}
-          placeholder="e.g. interview prep, fundamentals first…"
+          placeholder="e.g. interview prep…"
           disabled={isGenerating}
         />
-        <p className="flex items-center gap-1.5 text-xs text-[var(--sea-ink-soft)]">
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Youtube className="size-3.5" />
           {youtubeReadyCount} ready YouTube source
           {youtubeReadyCount === 1 ? "" : "s"}
@@ -74,56 +74,49 @@ export function LearningRoadmapPanel({
       </div>
 
       {error ? (
-        <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {error}
         </p>
       ) : null}
 
       {youtubeReadyCount === 0 && !roadmap ? (
-        <div className="rounded-2xl border border-dashed border-[var(--line)] px-6 py-10 text-center">
-          <p className="text-sm text-[var(--sea-ink-soft)]">
-            Add and index at least one YouTube video (with captions) to build a
-            roadmap.
+        <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            Add and index at least one YouTube video with captions.
           </p>
         </div>
       ) : null}
 
       {roadmap ? (
-        <div className="space-y-5">
-          <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] px-5 py-4 shadow-sm">
-            <p className="text-xs font-medium uppercase tracking-wide text-[var(--sea-ink-soft)]">
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-muted/40 px-4 py-3">
+            <p className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
               Topic
             </p>
-            <h3 className="mt-1 font-[Fraunces,serif] text-xl font-semibold text-[var(--sea-ink)]">
+            <h3 className="mt-1 font-[Fraunces,serif] text-base font-semibold text-foreground">
               {roadmap.topic}
             </h3>
-            <p className="mt-2 text-sm leading-relaxed text-[var(--sea-ink-soft)]">
-              {roadmap.overview}
-            </p>
-            <p className="mt-3 text-xs text-[var(--sea-ink-soft)]">
-              {roadmap.steps.length} steps · {roadmap.sourceCount} videos ·{" "}
-              {roadmap.clipCount} clips sampled
-            </p>
+            <p className="mt-1 text-sm text-muted-foreground">{roadmap.overview}</p>
           </div>
 
-          <ol className="space-y-4">
+          <ol className="space-y-3">
             {roadmap.steps.map((step) => (
               <li
                 key={`${step.order}-${step.title}`}
-                className="rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] px-5 py-4 shadow-sm"
+                className="rounded-lg border border-border px-3 py-3"
               >
-                <div className="flex gap-3">
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_oklab,var(--lagoon)_20%,transparent)] text-sm font-semibold text-[var(--lagoon-deep)]">
+                <div className="flex gap-2">
+                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-primary">
                     {step.order}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <h4 className="font-semibold text-[var(--sea-ink)]">
+                    <h4 className="text-sm font-semibold text-foreground">
                       {step.title}
                     </h4>
-                    <p className="mt-1 text-sm leading-relaxed text-[var(--sea-ink-soft)]">
+                    <p className="mt-0.5 text-xs text-muted-foreground">
                       {step.summary}
                     </p>
-                    <div className="mt-3 flex flex-col gap-2">
+                    <div className="mt-2 flex flex-col gap-1.5">
                       {step.clips.map((clip) => {
                         const ts = formatTimestamp(clip.locator.tStart);
                         return (
@@ -140,15 +133,15 @@ export function LearningRoadmapPanel({
                                 citationNumber: clip.citationNumber,
                               })
                             }
-                            className="flex w-full items-start gap-2 rounded-xl bg-[var(--chip-bg)] px-3 py-2 text-left text-xs ring-1 ring-[var(--chip-line)] transition hover:bg-[color-mix(in_oklab,var(--lagoon)_12%,transparent)] hover:ring-[var(--lagoon)]"
+                            className="flex w-full items-start gap-2 rounded-md bg-muted/60 px-2.5 py-2 text-left text-xs transition hover:bg-accent focus-ring"
                           >
-                            <Youtube className="mt-0.5 size-3.5 shrink-0 text-[var(--lagoon-deep)]" />
+                            <Youtube className="mt-0.5 size-3.5 shrink-0 text-primary" />
                             <span className="min-w-0">
-                              <span className="font-medium text-[var(--sea-ink)]">
+                              <span className="font-medium text-foreground">
                                 {clip.sourceTitle}
                                 {ts ? ` · ${ts}` : ""}
                               </span>
-                              <span className="mt-0.5 line-clamp-2 block text-[var(--sea-ink-soft)]">
+                              <span className="mt-0.5 line-clamp-2 block text-muted-foreground">
                                 {clip.quote}
                               </span>
                             </span>
