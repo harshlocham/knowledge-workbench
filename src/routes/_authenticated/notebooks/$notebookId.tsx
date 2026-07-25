@@ -32,6 +32,7 @@ import {
   createPdfSource,
   createTextSource,
   createUrlSource,
+  createVttSource,
   deleteSource,
   listSources,
   reindexSource,
@@ -111,6 +112,7 @@ function NotebookWorkspacePage() {
   const createTextSourceFn = useServerFn(createTextSource);
   const createPdfSourceFn = useServerFn(createPdfSource);
   const createUrlSourceFn = useServerFn(createUrlSource);
+  const createVttSourceFn = useServerFn(createVttSource);
   const deleteSourceFn = useServerFn(deleteSource);
   const reindexSourceFn = useServerFn(reindexSource);
   const listSourcesFn = useServerFn(listSources);
@@ -119,11 +121,14 @@ function NotebookWorkspacePage() {
 
   const [sources, setSources] = useState(initialSources);
   const [messages, setMessages] = useState(initialMessages);
-  const [addMode, setAddMode] = useState<"text" | "pdf" | "url">("text");
+  const [addMode, setAddMode] = useState<"text" | "pdf" | "url" | "vtt">(
+    "text",
+  );
   const [sourceTitle, setSourceTitle] = useState("");
   const [sourceContent, setSourceContent] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [vttFile, setVttFile] = useState<File | null>(null);
   const [showAddSource, setShowAddSource] = useState(false);
   const [isAddingSource, setIsAddingSource] = useState(false);
   const [sourceError, setSourceError] = useState<string | null>(null);
@@ -246,12 +251,35 @@ function NotebookWorkspacePage() {
             fileBase64,
           },
         });
-      } else {
+      } else if (addMode === "url") {
         created = await createUrlSourceFn({
           data: {
             notebookId: notebook.id,
             url: sourceUrl.trim(),
             title: sourceTitle.trim() || undefined,
+          },
+        });
+      } else {
+        if (!vttFile) {
+          throw new Error("Choose a VTT file");
+        }
+        const isVtt =
+          vttFile.name.toLowerCase().endsWith(".vtt") ||
+          vttFile.type === "text/vtt" ||
+          vttFile.type === "text/plain";
+        if (!isVtt) {
+          throw new Error("File must be a .vtt transcript");
+        }
+        const fileBase64 = await fileToBase64(vttFile);
+        created = await createVttSourceFn({
+          data: {
+            notebookId: notebook.id,
+            title:
+              sourceTitle.trim() ||
+              vttFile.name.replace(/\.vtt$/i, "") ||
+              "Transcript",
+            fileName: vttFile.name,
+            fileBase64,
           },
         });
       }
@@ -260,6 +288,7 @@ function NotebookWorkspacePage() {
       setSourceContent("");
       setSourceUrl("");
       setPdfFile(null);
+      setVttFile(null);
       setShowAddSource(false);
       setSources((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
       await router.invalidate();
@@ -407,6 +436,7 @@ function NotebookWorkspacePage() {
                     ["text", "Text"],
                     ["pdf", "PDF"],
                     ["url", "URL"],
+                    ["vtt", "VTT"],
                   ] as const
                 ).map(([mode, label]) => (
                   <button
@@ -432,7 +462,7 @@ function NotebookWorkspacePage() {
                   onChange={(e) => setSourceTitle(e.target.value)}
                   required={addMode === "text"}
                   placeholder={
-                    addMode === "pdf"
+                    addMode === "pdf" || addMode === "vtt"
                       ? "Optional — defaults to file name"
                       : addMode === "url"
                         ? "Optional — defaults to page title"
@@ -489,6 +519,25 @@ function NotebookWorkspacePage() {
                 </div>
               ) : null}
 
+              {addMode === "vtt" ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="source-vtt">VTT transcript</Label>
+                  <Input
+                    id="source-vtt"
+                    type="file"
+                    accept=".vtt,text/vtt"
+                    onChange={(e) => setVttFile(e.target.files?.[0] ?? null)}
+                    required
+                  />
+                  {vttFile ? (
+                    <p className="text-xs text-[var(--sea-ink-soft)]">
+                      {vttFile.name} ·{" "}
+                      {(vttFile.size / 1024).toFixed(1)} KB
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
               {sourceError ? (
                 <p className="text-xs text-destructive">{sourceError}</p>
               ) : null}
@@ -502,10 +551,16 @@ function NotebookWorkspacePage() {
                     ? !sourceTitle.trim() || !sourceContent.trim()
                     : addMode === "pdf"
                       ? !pdfFile
-                      : !sourceUrl.trim())
+                      : addMode === "url"
+                        ? !sourceUrl.trim()
+                        : !vttFile)
                 }
               >
-                {addMode === "pdf" ? <Upload /> : <FileText />}
+                {addMode === "pdf" || addMode === "vtt" ? (
+                  <Upload />
+                ) : (
+                  <FileText />
+                )}
                 {isAddingSource ? "Indexing…" : "Add & index"}
               </Button>
             </form>
@@ -640,6 +695,11 @@ function NotebookWorkspacePage() {
                             {citation.sourceTitle ?? "Source"}
                             {citation.locator?.page != null
                               ? ` · p.${citation.locator.page}`
+                              : ""}
+                            {citation.locator?.tStart != null
+                              ? ` · ${Math.floor(citation.locator.tStart / 60)}:${String(
+                                  Math.floor(citation.locator.tStart % 60),
+                                ).padStart(2, "0")}`
                               : ""}
                           </button>
                         ))}

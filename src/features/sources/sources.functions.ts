@@ -9,6 +9,7 @@ import {
   requireOwnedNotebook,
   requireOwnedSource,
 } from "#/features/sources/notebook-access.server.ts";
+import { normalizeUrl } from "#/lib/rag/extract-url.server.ts";
 import { indexPdfSource } from "#/lib/rag/index-pdf-source.server.ts";
 import { clearSourceIndex } from "#/lib/rag/index-source.server.ts";
 import {
@@ -17,11 +18,12 @@ import {
   type TextSourceMetadata,
 } from "#/lib/rag/index-text-source.server.ts";
 import { indexUrlSource } from "#/lib/rag/index-url-source.server.ts";
-import { normalizeUrl } from "#/lib/rag/extract-url.server.ts";
+import { indexVttSource } from "#/lib/rag/index-vtt-source.server.ts";
 import {
   deleteSourceFile,
   pdfStorageKey,
   saveSourceFile,
+  vttStorageKey,
 } from "#/lib/storage/files.server.ts";
 
 export type SourceDTO = {
@@ -270,6 +272,75 @@ export const createUrlSource = createServerFn({ method: "POST" })
     return refreshSource(row.id);
   });
 
+export const createVttSource = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      notebookId: z.string().uuid(),
+      title: z.string().trim().min(1).max(200),
+      fileName: z.string().trim().min(1).max(260),
+      fileBase64: z.string().min(1),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const { userId } = await requireOwnedNotebook(data.notebookId);
+
+    const bytes = decodeBase64(data.fileBase64);
+    if (bytes.byteLength === 0) {
+      throw new Error("VTT file is empty");
+    }
+
+    if (bytes.byteLength > 10 * 1024 * 1024) {
+      throw new Error("VTT must be 10MB or smaller");
+    }
+
+    const [row] = await db
+      .insert(sources)
+      .values({
+        notebookId: data.notebookId,
+        type: "vtt",
+        title: data.title,
+        status: "uploading",
+        metadata: {
+          originalFileName: data.fileName,
+          mimeType: "text/vtt",
+        },
+      })
+      .returning();
+
+    if (!row) {
+      throw new Error("Failed to create VTT source");
+    }
+
+    const storageKey = vttStorageKey(data.notebookId, row.id);
+
+    try {
+      await saveSourceFile({ storageKey, data: bytes });
+
+      await db
+        .update(sources)
+        .set({
+          storageUri: storageKey,
+          updatedAt: new Date(),
+        })
+        .where(eq(sources.id, row.id));
+
+      await indexVttSource({
+        sourceId: row.id,
+        notebookId: data.notebookId,
+        ownerId: userId,
+        storageUri: storageKey,
+        existingMetadata: {
+          originalFileName: data.fileName,
+          mimeType: "text/vtt",
+        },
+      });
+    } catch {
+      // Status already marked failed inside indexer when applicable
+    }
+
+    return refreshSource(row.id);
+  });
+
 export const reindexSource = createServerFn({ method: "POST" })
   .validator(z.object({ sourceId: z.string().uuid() }))
   .handler(async ({ data }) => {
@@ -309,6 +380,21 @@ export const reindexSource = createServerFn({ method: "POST" })
           ownerId: userId,
           url: source.originalUrl,
           updateTitleFromPage: false,
+        });
+      } else if (source.type === "vtt") {
+        if (!source.storageUri) {
+          throw new Error("VTT file is missing from storage");
+        }
+
+        await indexVttSource({
+          sourceId: source.id,
+          notebookId: source.notebookId,
+          ownerId: userId,
+          storageUri: source.storageUri,
+          existingMetadata:
+            source.metadata && typeof source.metadata === "object"
+              ? (source.metadata as Record<string, unknown>)
+              : {},
         });
       } else {
         throw new Error(

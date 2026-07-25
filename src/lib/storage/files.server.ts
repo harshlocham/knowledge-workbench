@@ -13,6 +13,10 @@ export function pdfStorageKey(notebookId: string, sourceId: string) {
   return path.posix.join("uploads", notebookId, `${sourceId}.pdf`);
 }
 
+export function vttStorageKey(notebookId: string, sourceId: string) {
+  return path.posix.join("uploads", notebookId, `${sourceId}.vtt`);
+}
+
 function resolveStoragePath(storageKey: string) {
   const relative = storageKey.replace(/^uploads\/?/, "");
   const absolute = path.resolve(UPLOAD_ROOT, relative);

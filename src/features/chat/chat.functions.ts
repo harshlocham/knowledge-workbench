@@ -16,6 +16,7 @@ import { requireUserId } from "#/lib/auth.server.ts";
 import { searchNotebookChunks } from "#/lib/qdrant/points.ts";
 import { embedTexts } from "#/lib/rag/embed.ts";
 import { generateGroundedAnswer } from "#/lib/rag/llm.ts";
+import { formatVttTimestamp } from "#/lib/rag/parse-vtt.server.ts";
 
 export type ChatMessageDTO = {
   id: string;
@@ -258,6 +259,60 @@ export const getSourceViewer = createServerFn({ method: "GET" })
 
     let content =
       typeof metadata?.content === "string" ? metadata.content : "";
+
+    // VTT: rebuild timestamped transcript for the viewer
+    if (row.source.type === "vtt") {
+      const cues = Array.isArray((metadata as { cues?: unknown })?.cues)
+        ? (
+            metadata as {
+              cues: Array<{
+                cueIndex: number;
+                tStart: number;
+                tEnd: number;
+                text: string;
+              }>;
+            }
+          ).cues
+        : [];
+
+      if (cues.length > 0) {
+        content = cues
+          .map(
+            (cue) =>
+              `[${formatVttTimestamp(cue.tStart)} → ${formatVttTimestamp(cue.tEnd)}] ${cue.text}`,
+          )
+          .join("\n");
+
+        // Map cited cues onto the timestamped display lines for highlighting
+        if (highlight) {
+          const cueIndexes =
+            highlight.locator?.cueIndexes ??
+            (highlight.locator?.cueIndex != null
+              ? [highlight.locator.cueIndex]
+              : []);
+
+          const matchedLines = cues
+            .filter((cue) => cueIndexes.includes(cue.cueIndex))
+            .map(
+              (cue) =>
+                `[${formatVttTimestamp(cue.tStart)} → ${formatVttTimestamp(cue.tEnd)}] ${cue.text}`,
+            );
+
+          highlight = {
+            ...highlight,
+            content:
+              matchedLines.length > 0
+                ? matchedLines.join("\n")
+                : highlight.content,
+            locator: {
+              ...highlight.locator,
+              startOffset: undefined,
+              endOffset: undefined,
+            },
+          };
+        }
+      }
+    }
 
     // PDFs store the binary on disk — rebuild a page-aware preview from chunks
     if (row.source.type === "pdf") {

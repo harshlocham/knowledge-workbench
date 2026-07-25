@@ -12,8 +12,21 @@ export type ViewerHighlight = {
     endOffset?: number;
     url?: string;
     heading?: string;
+    tStart?: number;
+    tEnd?: number;
+    cueIndex?: number;
+    cueIndexes?: number[];
   } | null;
 };
+
+function formatViewerTime(totalSeconds: number) {
+  const safe = Math.max(0, totalSeconds);
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  const whole = Math.floor(seconds);
+  const millis = Math.round((seconds - whole) * 1000);
+  return `${String(minutes).padStart(2, "0")}:${String(whole).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+}
 
 export type ViewerSource = {
   id: string;
@@ -120,6 +133,10 @@ export function SourceViewerPanel({
                 : ""}
               {source.highlight?.locator?.heading
                 ? ` · ${source.highlight.locator.heading}`
+                : ""}
+              {source.highlight?.locator?.tStart != null &&
+              source.highlight?.locator?.tEnd != null
+                ? ` · ${formatViewerTime(source.highlight.locator.tStart)} → ${formatViewerTime(source.highlight.locator.tEnd)}`
                 : ""}
             </p>
           ) : null}

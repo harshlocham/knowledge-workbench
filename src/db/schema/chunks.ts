@@ -20,9 +20,14 @@ export type ChunkLocator = {
   url?: string;
   heading?: string;
   videoId?: string;
+  /** Start time in seconds (VTT / media) */
   tStart?: number;
+  /** End time in seconds (VTT / media) */
   tEnd?: number;
+  /** First cue index in the chunk (convenience) */
   cueIndex?: number;
+  /** All cue indexes covered by this chunk */
+  cueIndexes?: number[];
 };
 
 export const chunks = pgTable(
