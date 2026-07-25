@@ -12,8 +12,12 @@ type CueSpan = {
 /**
  * Join cues into plain text, run the shared chunker, then map each chunk
  * back onto overlapping cue timings (tStart / tEnd / cueIndexes).
+ * Optional videoId is attached for YouTube deep-links.
  */
-export function chunkVttCues(cues: VttCue[]): {
+export function chunkVttCues(
+  cues: VttCue[],
+  options?: { videoId?: string; url?: string },
+): {
   plainText: string;
   chunks: TextChunk[];
 } {
@@ -64,6 +68,8 @@ export function chunkVttCues(cues: VttCue[]): {
         tEnd: timed.at(-1)?.tEnd,
         cueIndex: cueIndexes[0],
         cueIndexes,
+        videoId: options?.videoId,
+        url: options?.url,
       },
     } satisfies TextChunk;
   });

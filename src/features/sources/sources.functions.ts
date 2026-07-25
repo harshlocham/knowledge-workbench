@@ -10,6 +10,10 @@ import {
   requireOwnedSource,
 } from "#/features/sources/notebook-access.server.ts";
 import { normalizeUrl } from "#/lib/rag/extract-url.server.ts";
+import {
+  extractYoutubeVideoId,
+  youtubeWatchUrl,
+} from "#/lib/rag/extract-youtube.server.ts";
 import { indexPdfSource } from "#/lib/rag/index-pdf-source.server.ts";
 import { clearSourceIndex } from "#/lib/rag/index-source.server.ts";
 import {
@@ -19,6 +23,7 @@ import {
 } from "#/lib/rag/index-text-source.server.ts";
 import { indexUrlSource } from "#/lib/rag/index-url-source.server.ts";
 import { indexVttSource } from "#/lib/rag/index-vtt-source.server.ts";
+import { indexYoutubeSource } from "#/lib/rag/index-youtube-source.server.ts";
 import {
   deleteSourceFile,
   pdfStorageKey,
@@ -342,6 +347,61 @@ export const createVttSource = createServerFn({ method: "POST" })
     return refreshSource(row.id);
   });
 
+export const createYoutubeSource = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      notebookId: z.string().uuid(),
+      url: z.string().trim().min(1).max(2000),
+      title: z.string().trim().max(200).optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const { userId } = await requireOwnedNotebook(data.notebookId);
+
+    let videoId: string;
+    try {
+      videoId = extractYoutubeVideoId(data.url);
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : "Invalid YouTube URL",
+      );
+    }
+
+    const watchUrl = youtubeWatchUrl(videoId);
+    const title = data.title?.trim() || `YouTube ${videoId}`;
+
+    const [row] = await db
+      .insert(sources)
+      .values({
+        notebookId: data.notebookId,
+        type: "youtube",
+        title,
+        status: "uploading",
+        originalUrl: watchUrl,
+        metadata: { videoId },
+      })
+      .returning();
+
+    if (!row) {
+      throw new Error("Failed to create YouTube source");
+    }
+
+    try {
+      await indexYoutubeSource({
+        sourceId: row.id,
+        notebookId: data.notebookId,
+        ownerId: userId,
+        urlOrId: videoId,
+        updateTitleFromVideo: !data.title?.trim(),
+        existingMetadata: { videoId },
+      });
+    } catch {
+      // Status already marked failed inside indexer
+    }
+
+    return refreshSource(row.id);
+  });
+
 export const reindexSource = createServerFn({ method: "POST" })
   .validator(z.object({ sourceId: z.string().uuid() }))
   .handler(async ({ data }) => {
@@ -392,6 +452,24 @@ export const reindexSource = createServerFn({ method: "POST" })
           notebookId: source.notebookId,
           ownerId: userId,
           storageUri: source.storageUri,
+          existingMetadata:
+            source.metadata && typeof source.metadata === "object"
+              ? (source.metadata as Record<string, unknown>)
+              : {},
+        });
+      } else if (source.type === "youtube") {
+        const meta = source.metadata as { videoId?: string } | null;
+        const urlOrId = source.originalUrl || meta?.videoId;
+        if (!urlOrId) {
+          throw new Error("YouTube source is missing video URL");
+        }
+
+        await indexYoutubeSource({
+          sourceId: source.id,
+          notebookId: source.notebookId,
+          ownerId: userId,
+          urlOrId,
+          updateTitleFromVideo: false,
           existingMetadata:
             source.metadata && typeof source.metadata === "object"
               ? (source.metadata as Record<string, unknown>)

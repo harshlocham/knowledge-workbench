@@ -34,6 +34,7 @@ import {
   createTextSource,
   createUrlSource,
   createVttSource,
+  createYoutubeSource,
   deleteSource,
   listSources,
   reindexSource,
@@ -127,6 +128,7 @@ function NotebookWorkspacePage() {
   const createPdfSourceFn = useServerFn(createPdfSource);
   const createUrlSourceFn = useServerFn(createUrlSource);
   const createVttSourceFn = useServerFn(createVttSource);
+  const createYoutubeSourceFn = useServerFn(createYoutubeSource);
   const deleteSourceFn = useServerFn(deleteSource);
   const reindexSourceFn = useServerFn(reindexSource);
   const listSourcesFn = useServerFn(listSources);
@@ -135,12 +137,13 @@ function NotebookWorkspacePage() {
 
   const [sources, setSources] = useState(initialSources);
   const [messages, setMessages] = useState(initialMessages);
-  const [addMode, setAddMode] = useState<"text" | "pdf" | "url" | "vtt">(
-    "text",
-  );
+  const [addMode, setAddMode] = useState<
+    "text" | "pdf" | "url" | "vtt" | "youtube"
+  >("text");
   const [sourceTitle, setSourceTitle] = useState("");
   const [sourceContent, setSourceContent] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
+  const [youtubeUrl, setYoutubeUrl] = useState("");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [vttFile, setVttFile] = useState<File | null>(null);
   const [showAddSource, setShowAddSource] = useState(false);
@@ -297,7 +300,7 @@ function NotebookWorkspacePage() {
             title: sourceTitle.trim() || undefined,
           },
         });
-      } else {
+      } else if (addMode === "vtt") {
         if (!vttFile) {
           throw new Error("Choose a VTT file");
         }
@@ -320,11 +323,20 @@ function NotebookWorkspacePage() {
             fileBase64,
           },
         });
+      } else {
+        created = await createYoutubeSourceFn({
+          data: {
+            notebookId: notebook.id,
+            url: youtubeUrl.trim(),
+            title: sourceTitle.trim() || undefined,
+          },
+        });
       }
 
       setSourceTitle("");
       setSourceContent("");
       setSourceUrl("");
+      setYoutubeUrl("");
       setPdfFile(null);
       setVttFile(null);
       setShowAddSource(false);
@@ -475,6 +487,7 @@ function NotebookWorkspacePage() {
                     ["pdf", "PDF"],
                     ["url", "URL"],
                     ["vtt", "VTT"],
+                    ["youtube", "YT"],
                   ] as const
                 ).map(([mode, label]) => (
                   <button
@@ -504,7 +517,9 @@ function NotebookWorkspacePage() {
                       ? "Optional — defaults to file name"
                       : addMode === "url"
                         ? "Optional — defaults to page title"
-                        : undefined
+                        : addMode === "youtube"
+                          ? "Optional — defaults to video title"
+                          : undefined
                   }
                   maxLength={200}
                 />
@@ -576,6 +591,24 @@ function NotebookWorkspacePage() {
                 </div>
               ) : null}
 
+              {addMode === "youtube" ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="source-youtube">YouTube URL</Label>
+                  <Input
+                    id="source-youtube"
+                    type="url"
+                    value={youtubeUrl}
+                    onChange={(e) => setYoutubeUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    required
+                  />
+                  <p className="text-xs text-[var(--sea-ink-soft)]">
+                    Uses captions when available. Videos without captions will
+                    fail indexing.
+                  </p>
+                </div>
+              ) : null}
+
               {sourceError ? (
                 <p className="text-xs text-destructive">{sourceError}</p>
               ) : null}
@@ -591,7 +624,9 @@ function NotebookWorkspacePage() {
                       ? !pdfFile
                       : addMode === "url"
                         ? !sourceUrl.trim()
-                        : !vttFile)
+                        : addMode === "vtt"
+                          ? !vttFile
+                          : !youtubeUrl.trim())
                 }
               >
                 {addMode === "pdf" || addMode === "vtt" ? (
