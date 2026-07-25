@@ -9,12 +9,20 @@ import {
   requireOwnedNotebook,
   requireOwnedSource,
 } from "#/features/sources/notebook-access.server.ts";
+import { indexPdfSource } from "#/lib/rag/index-pdf-source.server.ts";
+import { clearSourceIndex } from "#/lib/rag/index-source.server.ts";
 import {
-  clearSourceIndex,
   indexTextSource,
   reindexTextSource,
   type TextSourceMetadata,
 } from "#/lib/rag/index-text-source.server.ts";
+import { indexUrlSource } from "#/lib/rag/index-url-source.server.ts";
+import { normalizeUrl } from "#/lib/rag/extract-url.server.ts";
+import {
+  deleteSourceFile,
+  pdfStorageKey,
+  saveSourceFile,
+} from "#/lib/storage/files.server.ts";
 
 export type SourceDTO = {
   id: string;
@@ -23,8 +31,10 @@ export type SourceDTO = {
   title: string;
   status: "uploading" | "indexing" | "ready" | "failed";
   errorMessage: string | null;
+  originalUrl: string | null;
   charCount: number | null;
   chunkCount: number | null;
+  pageCount: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -45,11 +55,31 @@ function toSourceDTO(row: typeof sources.$inferSelect): SourceDTO {
     title: row.title,
     status: row.status,
     errorMessage: row.errorMessage,
+    originalUrl: row.originalUrl,
     charCount: readMetaNumber(row.metadata, "charCount"),
     chunkCount: readMetaNumber(row.metadata, "chunkCount"),
+    pageCount: readMetaNumber(row.metadata, "pageCount"),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function decodeBase64(base64: string) {
+  return Uint8Array.from(Buffer.from(base64, "base64"));
+}
+
+async function refreshSource(sourceId: string) {
+  const [fresh] = await db
+    .select()
+    .from(sources)
+    .where(eq(sources.id, sourceId))
+    .limit(1);
+
+  if (!fresh) {
+    throw notFound();
+  }
+
+  return toSourceDTO(fresh);
 }
 
 export const listSources = createServerFn({ method: "GET" })
@@ -105,16 +135,139 @@ export const createTextSource = createServerFn({ method: "POST" })
         content: data.content,
       });
     } catch {
-      // Status already marked failed inside indexer; return current row state
+      // Status already marked failed inside indexer
     }
 
-    const [fresh] = await db
-      .select()
-      .from(sources)
-      .where(eq(sources.id, row.id))
-      .limit(1);
+    return refreshSource(row.id);
+  });
 
-    return toSourceDTO(fresh ?? row);
+export const createPdfSource = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      notebookId: z.string().uuid(),
+      title: z.string().trim().min(1).max(200),
+      fileName: z.string().trim().min(1).max(260),
+      fileBase64: z.string().min(1),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const { userId } = await requireOwnedNotebook(data.notebookId);
+
+    const bytes = decodeBase64(data.fileBase64);
+    if (bytes.byteLength === 0) {
+      throw new Error("PDF file is empty");
+    }
+
+    // ~20MB decoded limit for local uploads
+    if (bytes.byteLength > 20 * 1024 * 1024) {
+      throw new Error("PDF must be 20MB or smaller");
+    }
+
+    const [row] = await db
+      .insert(sources)
+      .values({
+        notebookId: data.notebookId,
+        type: "pdf",
+        title: data.title,
+        status: "uploading",
+        metadata: {
+          originalFileName: data.fileName,
+          mimeType: "application/pdf",
+        },
+      })
+      .returning();
+
+    if (!row) {
+      throw new Error("Failed to create PDF source");
+    }
+
+    const storageKey = pdfStorageKey(data.notebookId, row.id);
+
+    try {
+      await saveSourceFile({ storageKey, data: bytes });
+
+      await db
+        .update(sources)
+        .set({
+          storageUri: storageKey,
+          updatedAt: new Date(),
+        })
+        .where(eq(sources.id, row.id));
+
+      await indexPdfSource({
+        sourceId: row.id,
+        notebookId: data.notebookId,
+        ownerId: userId,
+        storageUri: storageKey,
+        existingMetadata: {
+          originalFileName: data.fileName,
+          mimeType: "application/pdf",
+        },
+      });
+    } catch {
+      // Indexer/storage errors mark failed; keep row for retry/re-index
+    }
+
+    return refreshSource(row.id);
+  });
+
+export const createUrlSource = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      notebookId: z.string().uuid(),
+      url: z.string().trim().min(1).max(2000),
+      title: z.string().trim().max(200).optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const { userId } = await requireOwnedNotebook(data.notebookId);
+
+    let url: string;
+    try {
+      url = normalizeUrl(data.url);
+    } catch {
+      throw new Error("Enter a valid website URL");
+    }
+
+    const title =
+      data.title?.trim() ||
+      (() => {
+        try {
+          return new URL(url).hostname;
+        } catch {
+          return "Website";
+        }
+      })();
+
+    const [row] = await db
+      .insert(sources)
+      .values({
+        notebookId: data.notebookId,
+        type: "url",
+        title,
+        status: "uploading",
+        originalUrl: url,
+        metadata: {},
+      })
+      .returning();
+
+    if (!row) {
+      throw new Error("Failed to create URL source");
+    }
+
+    try {
+      await indexUrlSource({
+        sourceId: row.id,
+        notebookId: data.notebookId,
+        ownerId: userId,
+        url,
+        updateTitleFromPage: !data.title?.trim(),
+      });
+    } catch {
+      // Status already marked failed inside indexer
+    }
+
+    return refreshSource(row.id);
   });
 
 export const reindexSource = createServerFn({ method: "POST" })
@@ -122,32 +275,51 @@ export const reindexSource = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { userId, source } = await requireOwnedSource(data.sourceId);
 
-    if (source.type !== "text") {
-      throw new Error("Only text sources can be re-indexed in this slice");
-    }
-
     try {
-      await reindexTextSource({
-        sourceId: source.id,
-        notebookId: source.notebookId,
-        ownerId: userId,
-        metadata: source.metadata,
-      });
+      if (source.type === "text") {
+        await reindexTextSource({
+          sourceId: source.id,
+          notebookId: source.notebookId,
+          ownerId: userId,
+          metadata: source.metadata,
+        });
+      } else if (source.type === "pdf") {
+        if (!source.storageUri) {
+          throw new Error("PDF file is missing from storage");
+        }
+
+        await indexPdfSource({
+          sourceId: source.id,
+          notebookId: source.notebookId,
+          ownerId: userId,
+          storageUri: source.storageUri,
+          existingMetadata:
+            source.metadata && typeof source.metadata === "object"
+              ? (source.metadata as Record<string, unknown>)
+              : {},
+        });
+      } else if (source.type === "url") {
+        if (!source.originalUrl) {
+          throw new Error("URL source is missing originalUrl");
+        }
+
+        await indexUrlSource({
+          sourceId: source.id,
+          notebookId: source.notebookId,
+          ownerId: userId,
+          url: source.originalUrl,
+          updateTitleFromPage: false,
+        });
+      } else {
+        throw new Error(
+          `Re-index is not implemented for source type: ${source.type}`,
+        );
+      }
     } catch {
-      // Status already marked failed inside indexer
+      // Status already marked failed inside indexer when applicable
     }
 
-    const [fresh] = await db
-      .select()
-      .from(sources)
-      .where(eq(sources.id, source.id))
-      .limit(1);
-
-    if (!fresh) {
-      throw notFound();
-    }
-
-    return toSourceDTO(fresh);
+    return refreshSource(source.id);
   });
 
 export const deleteSource = createServerFn({ method: "POST" })
@@ -156,6 +328,7 @@ export const deleteSource = createServerFn({ method: "POST" })
     const { source } = await requireOwnedSource(data.sourceId);
 
     await clearSourceIndex(source.id);
+    await deleteSourceFile(source.storageUri);
 
     const [deleted] = await db
       .delete(sources)

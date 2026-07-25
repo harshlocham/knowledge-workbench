@@ -231,8 +231,6 @@ export const getSourceViewer = createServerFn({ method: "GET" })
     }
 
     const metadata = row.source.metadata as { content?: string } | null;
-    const content =
-      typeof metadata?.content === "string" ? metadata.content : "";
 
     let highlight: {
       chunkId: string;
@@ -258,6 +256,52 @@ export const getSourceViewer = createServerFn({ method: "GET" })
       }
     }
 
+    let content =
+      typeof metadata?.content === "string" ? metadata.content : "";
+
+    // PDFs store the binary on disk — rebuild a page-aware preview from chunks
+    if (row.source.type === "pdf") {
+      const pdfChunks = await db
+        .select()
+        .from(chunks)
+        .where(eq(chunks.sourceId, data.sourceId))
+        .orderBy(asc(chunks.chunkIndex));
+
+      const byPage = new Map<number, string[]>();
+      for (const chunk of pdfChunks) {
+        const page = chunk.locator?.page ?? 0;
+        const list = byPage.get(page) ?? [];
+        list.push(chunk.content);
+        byPage.set(page, list);
+      }
+
+      content = [...byPage.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([page, parts]) =>
+          page > 0
+            ? `--- Page ${page} ---\n\n${parts.join("\n\n")}`
+            : parts.join("\n\n"),
+        )
+        .join("\n\n");
+
+      // Page-relative offsets don't map onto the joined preview; highlight by quote
+      if (highlight) {
+        highlight = {
+          ...highlight,
+          locator: {
+            ...highlight.locator,
+            startOffset: undefined,
+            endOffset: undefined,
+          },
+        };
+      }
+    }
+
+    const meta = metadata as {
+      content?: string;
+      canonicalUrl?: string;
+    } | null;
+
     return {
       id: row.source.id,
       title: row.source.title,
@@ -265,5 +309,8 @@ export const getSourceViewer = createServerFn({ method: "GET" })
       status: row.source.status,
       content,
       highlight,
+      originalUrl:
+        row.source.originalUrl ??
+        (typeof meta?.canonicalUrl === "string" ? meta.canonicalUrl : null),
     };
   });

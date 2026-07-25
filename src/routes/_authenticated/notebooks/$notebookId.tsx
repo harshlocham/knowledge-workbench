@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Send,
   Trash2,
+  Upload,
 } from "lucide-react";
 
 import {
@@ -28,13 +29,26 @@ import {
 } from "#/features/chat/chat.functions.ts";
 import { getNotebook } from "#/features/notebooks/notebooks.functions.ts";
 import {
+  createPdfSource,
   createTextSource,
+  createUrlSource,
   deleteSource,
   listSources,
   reindexSource,
   type SourceDTO,
 } from "#/features/sources/sources.functions.ts";
 import type { MessageCitation } from "#/db/schema/messages.ts";
+
+async function fileToBase64(file: File) {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
 
 export const Route = createFileRoute("/_authenticated/notebooks/$notebookId")({
   loader: async ({ params }) => {
@@ -95,6 +109,8 @@ function NotebookWorkspacePage() {
   const router = useRouter();
 
   const createTextSourceFn = useServerFn(createTextSource);
+  const createPdfSourceFn = useServerFn(createPdfSource);
+  const createUrlSourceFn = useServerFn(createUrlSource);
   const deleteSourceFn = useServerFn(deleteSource);
   const reindexSourceFn = useServerFn(reindexSource);
   const listSourcesFn = useServerFn(listSources);
@@ -103,8 +119,11 @@ function NotebookWorkspacePage() {
 
   const [sources, setSources] = useState(initialSources);
   const [messages, setMessages] = useState(initialMessages);
+  const [addMode, setAddMode] = useState<"text" | "pdf" | "url">("text");
   const [sourceTitle, setSourceTitle] = useState("");
   const [sourceContent, setSourceContent] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [showAddSource, setShowAddSource] = useState(false);
   const [isAddingSource, setIsAddingSource] = useState(false);
   const [sourceError, setSourceError] = useState<string | null>(null);
@@ -192,28 +211,61 @@ function NotebookWorkspacePage() {
     }
   }
 
-  async function handleAddTextSource(event: React.FormEvent) {
+  async function handleAddSource(event: React.FormEvent) {
     event.preventDefault();
     setSourceError(null);
     setIsAddingSource(true);
 
     try {
-      const created = await createTextSourceFn({
-        data: {
-          notebookId: notebook.id,
-          title: sourceTitle.trim(),
-          content: sourceContent.trim(),
-        },
-      });
+      let created: SourceDTO;
+
+      if (addMode === "text") {
+        created = await createTextSourceFn({
+          data: {
+            notebookId: notebook.id,
+            title: sourceTitle.trim(),
+            content: sourceContent.trim(),
+          },
+        });
+      } else if (addMode === "pdf") {
+        if (!pdfFile) {
+          throw new Error("Choose a PDF file");
+        }
+        if (pdfFile.type !== "application/pdf") {
+          throw new Error("File must be a PDF");
+        }
+        const fileBase64 = await fileToBase64(pdfFile);
+        created = await createPdfSourceFn({
+          data: {
+            notebookId: notebook.id,
+            title:
+              sourceTitle.trim() ||
+              pdfFile.name.replace(/\.pdf$/i, "") ||
+              "PDF source",
+            fileName: pdfFile.name,
+            fileBase64,
+          },
+        });
+      } else {
+        created = await createUrlSourceFn({
+          data: {
+            notebookId: notebook.id,
+            url: sourceUrl.trim(),
+            title: sourceTitle.trim() || undefined,
+          },
+        });
+      }
 
       setSourceTitle("");
       setSourceContent("");
+      setSourceUrl("");
+      setPdfFile(null);
       setShowAddSource(false);
       setSources((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
       await router.invalidate();
     } catch (err) {
       setSourceError(
-        err instanceof Error ? err.message : "Failed to add text source",
+        err instanceof Error ? err.message : "Failed to add source",
       );
     } finally {
       setIsAddingSource(false);
@@ -346,30 +398,97 @@ function NotebookWorkspacePage() {
 
           {showAddSource ? (
             <form
-              onSubmit={handleAddTextSource}
+              onSubmit={handleAddSource}
               className="space-y-3 border-b border-[var(--line)] px-4 py-3"
             >
+              <div className="flex gap-1 rounded-lg bg-[var(--chip-bg)] p-1 ring-1 ring-[var(--chip-line)]">
+                {(
+                  [
+                    ["text", "Text"],
+                    ["pdf", "PDF"],
+                    ["url", "URL"],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setAddMode(mode)}
+                    className={
+                      addMode === mode
+                        ? "flex-1 rounded-md bg-[var(--surface-strong)] px-2 py-1 text-xs font-medium text-[var(--sea-ink)]"
+                        : "flex-1 rounded-md px-2 py-1 text-xs font-medium text-[var(--sea-ink-soft)]"
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
               <div className="space-y-1.5">
                 <Label htmlFor="source-title">Title</Label>
                 <Input
                   id="source-title"
                   value={sourceTitle}
                   onChange={(e) => setSourceTitle(e.target.value)}
-                  required
+                  required={addMode === "text"}
+                  placeholder={
+                    addMode === "pdf"
+                      ? "Optional — defaults to file name"
+                      : addMode === "url"
+                        ? "Optional — defaults to page title"
+                        : undefined
+                  }
                   maxLength={200}
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="source-content">Text</Label>
-                <Textarea
-                  id="source-content"
-                  value={sourceContent}
-                  onChange={(e) => setSourceContent(e.target.value)}
-                  required
-                  rows={5}
-                  maxLength={200_000}
-                />
-              </div>
+
+              {addMode === "text" ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="source-content">Text</Label>
+                  <Textarea
+                    id="source-content"
+                    value={sourceContent}
+                    onChange={(e) => setSourceContent(e.target.value)}
+                    required
+                    rows={5}
+                    maxLength={200_000}
+                  />
+                </div>
+              ) : null}
+
+              {addMode === "pdf" ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="source-pdf">PDF file</Label>
+                  <Input
+                    id="source-pdf"
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)}
+                    required
+                  />
+                  {pdfFile ? (
+                    <p className="text-xs text-[var(--sea-ink-soft)]">
+                      {pdfFile.name} ·{" "}
+                      {(pdfFile.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {addMode === "url" ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="source-url">Website URL</Label>
+                  <Input
+                    id="source-url"
+                    type="url"
+                    value={sourceUrl}
+                    onChange={(e) => setSourceUrl(e.target.value)}
+                    placeholder="https://example.com/article"
+                    required
+                  />
+                </div>
+              ) : null}
+
               {sourceError ? (
                 <p className="text-xs text-destructive">{sourceError}</p>
               ) : null}
@@ -378,10 +497,15 @@ function NotebookWorkspacePage() {
                 size="sm"
                 className="w-full"
                 disabled={
-                  isAddingSource || !sourceTitle.trim() || !sourceContent.trim()
+                  isAddingSource ||
+                  (addMode === "text"
+                    ? !sourceTitle.trim() || !sourceContent.trim()
+                    : addMode === "pdf"
+                      ? !pdfFile
+                      : !sourceUrl.trim())
                 }
               >
-                <FileText />
+                {addMode === "pdf" ? <Upload /> : <FileText />}
                 {isAddingSource ? "Indexing…" : "Add & index"}
               </Button>
             </form>
@@ -407,10 +531,16 @@ function NotebookWorkspacePage() {
                         </p>
                         <SourceStatusBadge status={source.status} />
                       </div>
-                      <p className="mt-1 text-xs text-[var(--sea-ink-soft)]">
+                      <p className="mt-1 truncate text-xs text-[var(--sea-ink-soft)]">
                         {source.type}
+                        {source.pageCount != null
+                          ? ` · ${source.pageCount} pages`
+                          : ""}
                         {source.chunkCount != null
                           ? ` · ${source.chunkCount} chunks`
+                          : ""}
+                        {source.originalUrl
+                          ? ` · ${source.originalUrl.replace(/^https?:\/\//, "")}`
                           : ""}
                       </p>
                       {source.status === "failed" && source.errorMessage ? (
@@ -508,6 +638,9 @@ function NotebookWorkspacePage() {
                           >
                             [{citation.citationNumber}]{" "}
                             {citation.sourceTitle ?? "Source"}
+                            {citation.locator?.page != null
+                              ? ` · p.${citation.locator.page}`
+                              : ""}
                           </button>
                         ))}
                       </div>

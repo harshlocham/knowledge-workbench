@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 
 import { Button } from "#/components/ui/button.tsx";
 
@@ -7,8 +7,11 @@ export type ViewerHighlight = {
   chunkId: string;
   content: string;
   locator?: {
+    page?: number;
     startOffset?: number;
     endOffset?: number;
+    url?: string;
+    heading?: string;
   } | null;
 };
 
@@ -18,6 +21,7 @@ export type ViewerSource = {
   type: string;
   content: string;
   highlight: ViewerHighlight | null;
+  originalUrl?: string | null;
 };
 
 function renderHighlightedContent(
@@ -99,6 +103,8 @@ export function SourceViewerPanel({
     );
   }
 
+  const openUrl = source?.originalUrl ?? source?.highlight?.locator?.url;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-start justify-between gap-3 border-b border-[var(--line)] px-4 py-3">
@@ -109,18 +115,45 @@ export function SourceViewerPanel({
           {source ? (
             <p className="mt-0.5 text-xs uppercase tracking-wide text-[var(--sea-ink-soft)]">
               {source.type}
+              {source.highlight?.locator?.page != null
+                ? ` · page ${source.highlight.locator.page}`
+                : ""}
+              {source.highlight?.locator?.heading
+                ? ` · ${source.highlight.locator.heading}`
+                : ""}
             </p>
           ) : null}
+          {openUrl ? (
+            <a
+              href={openUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-xs font-medium text-[var(--lagoon-deep)] hover:underline"
+            >
+              <ExternalLink className="size-3 shrink-0" />
+              <span className="truncate">{openUrl}</span>
+            </a>
+          ) : null}
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Close source viewer"
-          onClick={onClose}
-        >
-          <X />
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          {openUrl ? (
+            <Button asChild variant="outline" size="xs">
+              <a href={openUrl} target="_blank" rel="noreferrer">
+                <ExternalLink />
+                Open
+              </a>
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Close source viewer"
+            onClick={onClose}
+          >
+            <X />
+          </Button>
+        </div>
       </div>
       <div
         ref={scrollRef}
@@ -130,7 +163,10 @@ export function SourceViewerPanel({
           <p className="text-sm text-[var(--sea-ink-soft)]">Opening source…</p>
         ) : (
           <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--sea-ink)]">
-            {renderHighlightedContent(source?.content ?? "", source?.highlight ?? null)}
+            {renderHighlightedContent(
+              source?.content ?? "",
+              source?.highlight ?? null,
+            )}
           </pre>
         )}
       </div>
