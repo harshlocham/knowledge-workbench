@@ -331,6 +331,21 @@ a {
   }
 }
 
+@keyframes citation-highlight-pulse {
+  0% {
+    background-color: color-mix(in oklab, var(--lagoon) 55%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--lagoon) 35%, transparent);
+  }
+  100% {
+    background-color: color-mix(in oklab, var(--lagoon) 28%, transparent);
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+.citation-highlight-pulse {
+  animation: citation-highlight-pulse 1.15s ease-out;
+}
+
 .site-footer {
   border-top: 1px solid var(--line);
   background: color-mix(in oklab, var(--header-bg) 84%, transparent 16%);

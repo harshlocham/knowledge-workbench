@@ -14,6 +14,7 @@ import {
 
 import {
   SourceViewerPanel,
+  type CitationNavItem,
   type ViewerSource,
 } from "#/components/notebook/source-viewer-panel.tsx";
 import { SourceStatusBadge } from "#/components/source-status-badge.tsx";
@@ -68,10 +69,16 @@ function isPendingStatus(status: SourceDTO["status"]) {
   return status === "uploading" || status === "indexing";
 }
 
+function citationKey(messageId: string, citation: MessageCitation) {
+  return `${messageId}:${citation.chunkId}:${citation.citationNumber ?? ""}`;
+}
+
 function renderAnswerWithCitations(
   content: string,
   citations: MessageCitation[],
-  onCitationClick: (citation: MessageCitation) => void,
+  messageId: string,
+  activeCitationKey: string | null,
+  onCitationClick: (citation: MessageCitation, messageId: string) => void,
 ) {
   const parts = content.split(/(\[\d+\])/g);
 
@@ -90,12 +97,19 @@ function renderAnswerWithCitations(
       return <span key={`${part}-${index}`}>{part}</span>;
     }
 
+    const key = citationKey(messageId, citation);
+    const isActive = activeCitationKey === key;
+
     return (
       <button
         key={`${part}-${index}`}
         type="button"
-        onClick={() => onCitationClick(citation)}
-        className="mx-0.5 inline-flex translate-y-[-1px] items-center rounded-full bg-[color-mix(in_oklab,var(--lagoon)_18%,transparent)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--lagoon-deep)] ring-1 ring-[color-mix(in_oklab,var(--lagoon)_30%,transparent)] transition hover:bg-[color-mix(in_oklab,var(--lagoon)_28%,transparent)]"
+        onClick={() => onCitationClick(citation, messageId)}
+        className={
+          isActive
+            ? "mx-0.5 inline-flex -translate-y-px items-center rounded-full bg-[color-mix(in_oklab,var(--lagoon)_32%,transparent)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--lagoon-deep)] ring-2 ring-[var(--lagoon)] transition"
+            : "mx-0.5 inline-flex -translate-y-px items-center rounded-full bg-[color-mix(in_oklab,var(--lagoon)_18%,transparent)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--lagoon-deep)] ring-1 ring-[color-mix(in_oklab,var(--lagoon)_30%,transparent)] transition hover:bg-[color-mix(in_oklab,var(--lagoon)_28%,transparent)]"
+        }
         title={citation.sourceTitle ?? "Open source"}
       >
         {citationNumber}
@@ -141,6 +155,10 @@ function NotebookWorkspacePage() {
   const [viewer, setViewer] = useState<ViewerSource | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [citationNav, setCitationNav] = useState<CitationNavItem[]>([]);
+  const [activeCitationKey, setActiveCitationKey] = useState<string | null>(
+    null,
+  );
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -181,15 +199,18 @@ function NotebookWorkspacePage() {
     [sources],
   );
 
-  async function openCitation(citation: MessageCitation) {
+  async function loadViewer(options: {
+    sourceId: string;
+    chunkId?: string;
+  }) {
     setViewerOpen(true);
     setViewerLoading(true);
 
     try {
       const data = await getSourceViewerFn({
         data: {
-          sourceId: citation.sourceId,
-          chunkId: citation.chunkId,
+          sourceId: options.sourceId,
+          chunkId: options.chunkId,
         },
       });
       setViewer(data);
@@ -200,20 +221,37 @@ function NotebookWorkspacePage() {
     }
   }
 
-  async function openSource(sourceId: string) {
-    setViewerOpen(true);
-    setViewerLoading(true);
+  async function openCitation(
+    citation: MessageCitation,
+    messageId: string,
+  ) {
+    const message = messages.find((item) => item.id === messageId);
+    const nav = (message?.citations ?? [citation]).map((item) => ({
+      ...item,
+      key: citationKey(messageId, item),
+    }));
+    const key = citationKey(messageId, citation);
 
-    try {
-      const data = await getSourceViewerFn({
-        data: { sourceId },
-      });
-      setViewer(data);
-    } catch {
-      setViewer(null);
-    } finally {
-      setViewerLoading(false);
-    }
+    setCitationNav(nav);
+    setActiveCitationKey(key);
+    await loadViewer({
+      sourceId: citation.sourceId,
+      chunkId: citation.chunkId,
+    });
+  }
+
+  async function navigateCitation(citation: CitationNavItem) {
+    setActiveCitationKey(citation.key);
+    await loadViewer({
+      sourceId: citation.sourceId,
+      chunkId: citation.chunkId,
+    });
+  }
+
+  async function openSource(sourceId: string) {
+    setCitationNav([]);
+    setActiveCitationKey(null);
+    await loadViewer({ sourceId });
   }
 
   async function handleAddSource(event: React.FormEvent) {
@@ -672,6 +710,8 @@ function NotebookWorkspacePage() {
                         {renderAnswerWithCitations(
                           message.content,
                           message.citations,
+                          message.id,
+                          activeCitationKey,
                           openCitation,
                         )}
                       </div>
@@ -684,25 +724,33 @@ function NotebookWorkspacePage() {
                     {message.role === "assistant" &&
                     message.citations.length > 0 ? (
                       <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[var(--line)] pt-3">
-                        {message.citations.map((citation) => (
-                          <button
-                            key={`${message.id}-${citation.chunkId}-${citation.citationNumber}`}
-                            type="button"
-                            onClick={() => openCitation(citation)}
-                            className="rounded-full bg-[var(--chip-bg)] px-2.5 py-1 text-xs font-medium text-[var(--sea-ink-soft)] ring-1 ring-[var(--chip-line)] transition hover:text-[var(--sea-ink)]"
-                          >
-                            [{citation.citationNumber}]{" "}
-                            {citation.sourceTitle ?? "Source"}
-                            {citation.locator?.page != null
-                              ? ` · p.${citation.locator.page}`
-                              : ""}
-                            {citation.locator?.tStart != null
-                              ? ` · ${Math.floor(citation.locator.tStart / 60)}:${String(
-                                  Math.floor(citation.locator.tStart % 60),
-                                ).padStart(2, "0")}`
-                              : ""}
-                          </button>
-                        ))}
+                        {message.citations.map((citation) => {
+                          const key = citationKey(message.id, citation);
+                          const isActive = activeCitationKey === key;
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => openCitation(citation, message.id)}
+                              className={
+                                isActive
+                                  ? "rounded-full bg-[color-mix(in_oklab,var(--lagoon)_22%,transparent)] px-2.5 py-1 text-xs font-medium text-[var(--sea-ink)] ring-2 ring-[var(--lagoon)] transition"
+                                  : "rounded-full bg-[var(--chip-bg)] px-2.5 py-1 text-xs font-medium text-[var(--sea-ink-soft)] ring-1 ring-[var(--chip-line)] transition hover:text-[var(--sea-ink)]"
+                              }
+                            >
+                              [{citation.citationNumber}]{" "}
+                              {citation.sourceTitle ?? "Source"}
+                              {citation.locator?.page != null
+                                ? ` · p.${citation.locator.page}`
+                                : ""}
+                              {citation.locator?.tStart != null
+                                ? ` · ${Math.floor(citation.locator.tStart / 60)}:${String(
+                                    Math.floor(citation.locator.tStart % 60),
+                                  ).padStart(2, "0")}`
+                                : ""}
+                            </button>
+                          );
+                        })}
                       </div>
                     ) : null}
                   </div>
@@ -773,9 +821,14 @@ function NotebookWorkspacePage() {
           <SourceViewerPanel
             source={viewer}
             loading={viewerLoading}
+            citations={citationNav}
+            activeCitationKey={activeCitationKey}
+            onNavigateCitation={navigateCitation}
             onClose={() => {
               setViewerOpen(false);
               setViewer(null);
+              setCitationNav([]);
+              setActiveCitationKey(null);
             }}
           />
         </aside>

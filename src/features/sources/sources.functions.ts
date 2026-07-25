@@ -22,6 +22,7 @@ import { indexVttSource } from "#/lib/rag/index-vtt-source.server.ts";
 import {
   deleteSourceFile,
   pdfStorageKey,
+  readSourceFile,
   saveSourceFile,
   vttStorageKey,
 } from "#/lib/storage/files.server.ts";
@@ -426,4 +427,31 @@ export const deleteSource = createServerFn({ method: "POST" })
     }
 
     return { id: deleted.id };
+  });
+
+/** Serve an owned source binary (PDF/VTT) to the source viewer. */
+export const getSourceFile = createServerFn({ method: "GET" })
+  .validator(z.object({ sourceId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const { source } = await requireOwnedSource(data.sourceId);
+
+    if (!source.storageUri) {
+      throw new Error("Source file is not available");
+    }
+
+    const buffer = await readSourceFile(source.storageUri);
+    const mimeType =
+      source.type === "pdf"
+        ? "application/pdf"
+        : source.type === "vtt"
+          ? "text/vtt"
+          : "application/octet-stream";
+
+    const meta = source.metadata as { originalFileName?: string } | null;
+
+    return {
+      mimeType,
+      fileName: meta?.originalFileName ?? `${source.id}.${source.type}`,
+      base64: Buffer.from(buffer).toString("base64"),
+    };
   });

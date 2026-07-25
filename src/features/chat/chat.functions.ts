@@ -260,20 +260,30 @@ export const getSourceViewer = createServerFn({ method: "GET" })
     let content =
       typeof metadata?.content === "string" ? metadata.content : "";
 
-    // VTT: rebuild timestamped transcript for the viewer
-    if (row.source.type === "vtt") {
-      const cues = Array.isArray((metadata as { cues?: unknown })?.cues)
-        ? (
-            metadata as {
-              cues: Array<{
-                cueIndex: number;
-                tStart: number;
-                tEnd: number;
-                text: string;
-              }>;
-            }
-          ).cues
-        : [];
+    let pages: Array<{ page: number; text: string }> | null = null;
+    let cues: Array<{
+      cueIndex: number;
+      tStart: number;
+      tEnd: number;
+      text: string;
+    }> | null = null;
+
+    const meta = metadata as {
+      content?: string;
+      canonicalUrl?: string;
+      videoId?: string;
+      pageCount?: number;
+      cues?: Array<{
+        cueIndex: number;
+        tStart: number;
+        tEnd: number;
+        text: string;
+      }>;
+    } | null;
+
+    // Transcript sources (VTT / future YouTube): structured cues for the viewer
+    if (row.source.type === "vtt" || row.source.type === "youtube") {
+      cues = Array.isArray(meta?.cues) ? meta.cues : [];
 
       if (cues.length > 0) {
         content = cues
@@ -283,7 +293,6 @@ export const getSourceViewer = createServerFn({ method: "GET" })
           )
           .join("\n");
 
-        // Map cited cues onto the timestamped display lines for highlighting
         if (highlight) {
           const cueIndexes =
             highlight.locator?.cueIndexes ??
@@ -314,7 +323,7 @@ export const getSourceViewer = createServerFn({ method: "GET" })
       }
     }
 
-    // PDFs store the binary on disk — rebuild a page-aware preview from chunks
+    // PDFs: page-structured text for citation jump + file preview
     if (row.source.type === "pdf") {
       const pdfChunks = await db
         .select()
@@ -330,16 +339,18 @@ export const getSourceViewer = createServerFn({ method: "GET" })
         byPage.set(page, list);
       }
 
-      content = [...byPage.entries()]
+      pages = [...byPage.entries()]
         .sort(([a], [b]) => a - b)
-        .map(([page, parts]) =>
-          page > 0
-            ? `--- Page ${page} ---\n\n${parts.join("\n\n")}`
-            : parts.join("\n\n"),
-        )
+        .filter(([page]) => page > 0)
+        .map(([page, parts]) => ({
+          page,
+          text: parts.join("\n\n"),
+        }));
+
+      content = pages
+        .map((item) => `--- Page ${item.page} ---\n\n${item.text}`)
         .join("\n\n");
 
-      // Page-relative offsets don't map onto the joined preview; highlight by quote
       if (highlight) {
         highlight = {
           ...highlight,
@@ -352,10 +363,10 @@ export const getSourceViewer = createServerFn({ method: "GET" })
       }
     }
 
-    const meta = metadata as {
-      content?: string;
-      canonicalUrl?: string;
-    } | null;
+    const videoId =
+      (typeof meta?.videoId === "string" ? meta.videoId : null) ??
+      highlight?.locator?.videoId ??
+      null;
 
     return {
       id: row.source.id,
@@ -367,5 +378,13 @@ export const getSourceViewer = createServerFn({ method: "GET" })
       originalUrl:
         row.source.originalUrl ??
         (typeof meta?.canonicalUrl === "string" ? meta.canonicalUrl : null),
+      videoId,
+      pages,
+      cues,
+      pageCount:
+        typeof meta?.pageCount === "number"
+          ? meta.pageCount
+          : (pages?.length ?? null),
+      hasFile: Boolean(row.source.storageUri),
     };
   });
