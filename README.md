@@ -15,56 +15,56 @@ NotebookLM-style research assistant: create notebooks, add sources (PDF, text, w
 
 ## Quick start (local Bun)
 
-### Prerequisites
-
-- [Bun](https://bun.sh)
-- Docker (Postgres + Qdrant)
-- Clerk app keys
-- OpenAI API key
-
-### Setup
-
 ```bash
 bun install
 cp .env.example .env.local
-# Fill in Clerk + OPENAI_API_KEY (DATABASE_URL / QDRANT_URL defaults match compose)
 bun run db:migrate
 bun run dev
 ```
 
-App runs at [http://localhost:3000](http://localhost:3000).
+App: [http://localhost:3000](http://localhost:3000).
 
-## Docker (full stack)
+## Deploy on VPS (app + Caddy)
 
-Runs the app container with Postgres, Qdrant, migrations on boot, and a persistent `uploads` volume.
+Postgres and Qdrant stay **external** (Neon/Supabase + Qdrant Cloud, or any remote hosts). The VPS runs the **app** and **Caddy** (HTTPS reverse proxy). The app is not published on the host — only Caddy exposes `80` / `443`.
+
+### 1. Prepare managed services
+
+- Create a Postgres database and copy its connection string → `DATABASE_URL`
+- Create a Qdrant cluster/collection and set `QDRANT_URL` (+ `QDRANT_API_KEY` if needed)
+- Prefer **S3 or Cloudflare R2** for uploads (`S3_*`) so files survive container rebuilds
+- Point your domain’s **A/AAAA** records at the VPS
+
+### 2. On the VPS
 
 ```bash
+git clone <your-repo> && cd knowledge-workbench
 cp .env.example .env
-# Fill VITE_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY, OPENAI_API_KEY
-docker compose --profile app up --build -d
-```
-App: [http://localhost:3000](http://localhost:3000)
-Compose wires `DATABASE_URL` / `QDRANT_URL` to the internal services. Set `S3_*` in `.env` if you want object storage instead of the uploads volume.
+# Set DOMAIN, Clerk, OPENAI_API_KEY,
+# and external DATABASE_URL / QDRANT_URL
 
-Build a standalone image:
+# Open firewall: 80 and 443 (not 3000)
+docker compose -f docker-compose.prod.yml up --build -d
+```
+
+Migrations run automatically on app container start. Caddy issues a Let’s Encrypt cert for `DOMAIN`.
 
 ```bash
-docker build \
-  --build-arg VITE_CLERK_PUBLISHABLE_KEY="$VITE_CLERK_PUBLISHABLE_KEY" \
-  -t knowledge-workbench .
+docker compose -f docker-compose.prod.yml logs -f
+docker compose -f docker-compose.prod.yml down
 ```
+
+### 3. Clerk
+
+In Clerk, add `https://your.domain.com` to allowed origins / redirect URLs.
 
 ### Scripts
 
 | Command | Purpose |
 |---------|---------|
 | `bun run dev` | Dev server (port 3000) |
-| `bun run build` | Production build (Nitro Bun → `.output`) |
-| `bun run start` | Run production server |
-| `bun run check` | Biome lint + format |
-| `bun run db:generate` | Generate Drizzle migrations |
-| `bun run db:migrate` | Apply migrations |
-| `bun run db:studio` | Drizzle Studio |
+| `bun run build` / `start` | Production build & run (without Docker) |
+| `bun run db:migrate` | Apply migrations (also runs in container entrypoint) |
 
 ## How it works (short)
 
@@ -77,35 +77,18 @@ flowchart LR
   Answer --> Viewer[Open source viewer]
 ```
 
-1. Create a notebook (owned by your Clerk user).
-2. Add sources — indexing runs in the background; the UI listens via SSE.
-3. Ask questions — retrieval pulls top chunks, the LLM answers with citations.
-4. Click a citation to open the source viewer at the relevant page, offset, or timestamp.
-
-Full diagrams, data model, and request flows: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
-
-## Project layout
-
-```
-src/
-├── features/       # Server functions (notebooks, sources, chat, roadmap)
-├── lib/rag/        # Extract, chunk, embed, index, LLM
-├── lib/qdrant/     # Vector collection + search
-├── db/schema/      # Postgres tables
-├── components/     # Workspace, dashboard, viewers
-└── routes/         # Pages + SSE source-events API
-```
+Full diagrams: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
 ## Environment
 
-Copy [`.env.example`](./.env.example) to `.env.local` (Bun) or `.env` (Docker Compose). Required:
-
-- `VITE_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY`
-- `DATABASE_URL`
-- `OPENAI_API_KEY`
-- `QDRANT_URL` (default `http://localhost:6333`)
-
-Optional: `S3_*` for object storage instead of local `UPLOAD_DIR`.
+| Variable | Notes |
+|----------|--------|
+| `DOMAIN` | Caddy site address (auto HTTPS via Let’s Encrypt) |
+| `VITE_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` | Required; publishable key is baked at **image build** time |
+| `DATABASE_URL` | External Postgres |
+| `QDRANT_URL` / `QDRANT_API_KEY` | External Qdrant |
+| `OPENAI_API_KEY` | Required |
+| `S3_*` | Recommended on VPS instead of local disk |
 
 ## License
 

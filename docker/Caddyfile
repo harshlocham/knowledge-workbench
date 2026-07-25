@@ -1,0 +1,8 @@
+{$DOMAIN:localhost} {
+	encode gzip zstd
+
+	# SSE (source indexing progress) and long-lived connections
+	reverse_proxy app:3000 {
+		flush_interval -1
+	}
+}

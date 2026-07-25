@@ -1,3 +1,6 @@
+# Local dependencies only 
+# For VPS app-only deploy, use: docker compose -f docker-compose.prod.yml up -d
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -11,7 +14,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kb -d knowledge_workbench"]
+      test: [ "CMD-SHELL", "pg_isready -U kb -d knowledge_workbench" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -26,7 +29,7 @@ services:
       - qdrant_data:/qdrant/storage
 
   app:
-    profiles: ["app"]
+    profiles: [ "app" ]
     build:
       context: .
       dockerfile: Dockerfile
