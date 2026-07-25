@@ -7,6 +7,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  color-scheme: light;
+
   /* Brand (calm sea/lagoon — accent sparingly) */
   --sea-ink: #1a2f34;
   --sea-ink-soft: #5a7277;
@@ -72,6 +74,8 @@
 }
 
 .dark {
+  color-scheme: dark;
+
   --sea-ink: #e4efed;
   --sea-ink-soft: #9bb4b0;
   --lagoon: #4ec4bc;

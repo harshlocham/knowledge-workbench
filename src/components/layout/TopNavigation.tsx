@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 
+import { ModeToggle } from "#/components/mode-toggle.tsx";
 import HeaderUser from "#/integrations/clerk/header-user.tsx";
 import { cn } from "#/lib/utils.ts";
 
@@ -44,6 +45,7 @@ export function TopNavigation({
 
         <div className="flex shrink-0 items-center gap-2">
           {actions}
+          <ModeToggle />
           <HeaderUser />
         </div>
       </div>

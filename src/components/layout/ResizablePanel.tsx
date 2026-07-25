@@ -72,7 +72,9 @@ export function ResizablePanel({
           aria-label={`Expand ${label}`}
           onClick={() => onCollapsedChange(false)}
         >
-          <PanelLeftOpen className={side === "right" ? "rotate-180" : undefined} />
+          <PanelLeftOpen
+            className={side === "right" ? "rotate-180" : undefined}
+          />
         </Button>
       </div>
     );
@@ -87,20 +89,30 @@ export function ResizablePanel({
       )}
       style={{ width }}
     >
-      <div className="absolute top-2 z-10" style={side === "left" ? { right: 8 } : { left: 8 }}>
+      {/* In-flow toolbar so collapse never overlays panel headers / actions */}
+      <div
+        className={cn(
+          "flex h-9 shrink-0 items-center border-b border-border px-2",
+          side === "left" ? "justify-end" : "justify-start",
+        )}
+      >
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           aria-label={`Collapse ${label}`}
           onClick={() => onCollapsedChange(true)}
-          className="opacity-60 hover:opacity-100"
+          className="text-muted-foreground hover:text-foreground"
         >
-          <PanelLeftClose className={side === "right" ? "rotate-180" : undefined} />
+          <PanelLeftClose
+            className={side === "right" ? "rotate-180" : undefined}
+          />
         </Button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {children}
+      </div>
 
       <div
         role="separator"
