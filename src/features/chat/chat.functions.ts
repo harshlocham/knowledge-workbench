@@ -351,16 +351,7 @@ export const getSourceViewer = createServerFn({ method: "GET" })
         .map((item) => `--- Page ${item.page} ---\n\n${item.text}`)
         .join("\n\n");
 
-      if (highlight) {
-        highlight = {
-          ...highlight,
-          locator: {
-            ...highlight.locator,
-            startOffset: undefined,
-            endOffset: undefined,
-          },
-        };
-      }
+      // Keep page-local offsets for cited-text panel; PDF canvas uses quote match.
     }
 
     const videoId =

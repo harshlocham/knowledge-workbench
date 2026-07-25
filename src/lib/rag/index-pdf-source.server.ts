@@ -1,8 +1,10 @@
 import { chunkPages } from "#/lib/rag/chunk-pages.ts";
 import { extractPdfPages } from "#/lib/rag/extract-pdf.server.ts";
+import { friendlyIngestError } from "#/lib/ingest/limits.ts";
 import {
   clearSourceIndex,
   persistSourceChunks,
+  setSourceIndexProgress,
   setSourceStatus,
 } from "#/lib/rag/index-source.server.ts";
 import { readSourceFile } from "#/lib/storage/files.server.ts";
@@ -32,6 +34,12 @@ export async function indexPdfSource(options: {
   await clearSourceIndex(sourceId);
 
   try {
+    await setSourceIndexProgress(sourceId, {
+      phase: "extracting",
+      percent: 15,
+      message: "Extracting PDF text…",
+    });
+
     const fileBuffer = await readSourceFile(storageUri);
     const { pages, pageCount } = await extractPdfPages(
       new Uint8Array(fileBuffer),
@@ -40,6 +48,12 @@ export async function indexPdfSource(options: {
     if (pages.length === 0) {
       throw new Error("No extractable text found in PDF");
     }
+
+    await setSourceIndexProgress(sourceId, {
+      phase: "extracting",
+      percent: 28,
+      message: `Chunking ${pageCount} pages…`,
+    });
 
     const preparedChunks = chunkPages(pages);
     const charCount = pages.reduce((sum, page) => sum + page.text.length, 0);
@@ -58,8 +72,7 @@ export async function indexPdfSource(options: {
     });
   } catch (error) {
     await clearSourceIndex(sourceId);
-    const message =
-      error instanceof Error ? error.message : "Failed to index PDF source";
+    const message = friendlyIngestError(error, "Failed to index PDF source");
     await setSourceStatus(sourceId, "failed", message);
     throw error;
   }

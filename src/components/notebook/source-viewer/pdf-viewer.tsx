@@ -1,11 +1,27 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { LoaderCircle } from "lucide-react";
+import * as pdfjs from "pdfjs-dist";
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 import { getSourceFile } from "#/features/sources/sources.functions.ts";
 
 import { HighlightedText } from "./highlighted-text.tsx";
+import {
+  buildTextLayerModel,
+  findCitationRanges,
+  rangesToRects,
+} from "./pdf-text-highlight.ts";
 import type { ViewerHighlight, ViewerPage } from "./types.ts";
+
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
+
+type HighlightRect = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
 
 export function PdfViewer({
   sourceId,
@@ -21,26 +37,25 @@ export function PdfViewer({
   hasFile?: boolean;
 }) {
   const getSourceFileFn = useServerFn(getSourceFile);
-  const [fileUrl, setFileUrl] = useState<string | null>(null);
-  const [fileError, setFileError] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
   const [loadingFile, setLoadingFile] = useState(false);
+  const [rendering, setRendering] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
+  const [highlightRects, setHighlightRects] = useState<HighlightRect[]>([]);
+  const [pageSize, setPageSize] = useState({ width: 0, height: 0 });
 
   const page = highlight?.locator?.page ?? pages?.[0]?.page ?? 1;
-
-  const pageText = useMemo(() => {
-    if (!pages?.length) {
-      return highlight?.content ?? "";
-    }
-    const match = pages.find((item) => item.page === page);
-    return match?.text ?? pages.map((item) => item.text).join("\n\n");
-  }, [pages, page, highlight?.content]);
+  const pageText =
+    pages?.find((item) => item.page === page)?.text ??
+    highlight?.content ??
+    "";
 
   useEffect(() => {
-    if (!hasFile) {
-      return;
-    }
+    if (!hasFile) return;
 
-    let objectUrl: string | null = null;
     let cancelled = false;
 
     async function load() {
@@ -53,10 +68,8 @@ export function PdfViewer({
         for (let i = 0; i < binary.length; i += 1) {
           bytes[i] = binary.charCodeAt(i);
         }
-        const blob = new Blob([bytes], { type: file.mimeType });
-        objectUrl = URL.createObjectURL(blob);
         if (!cancelled) {
-          setFileUrl(objectUrl);
+          setPdfData(bytes);
         }
       } catch (error) {
         if (!cancelled) {
@@ -72,48 +85,172 @@ export function PdfViewer({
     }
 
     void load();
-
     return () => {
       cancelled = true;
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
     };
   }, [getSourceFileFn, hasFile, sourceId]);
 
-  const iframeSrc = fileUrl ? `${fileUrl}#page=${page}` : null;
+  useEffect(() => {
+    if (!pdfData) return;
+
+    let cancelled = false;
+    let renderTask: pdfjs.RenderTask | null = null;
+    let loadingTask: pdfjs.PDFDocumentLoadingTask | null = null;
+
+    async function renderPage() {
+      setRendering(true);
+      setFileError(null);
+
+      try {
+        // Copy buffer — pdf.js may transfer/detach the underlying ArrayBuffer
+        loadingTask = pdfjs.getDocument({ data: pdfData!.slice() });
+        const doc = await loadingTask.promise;
+        const pageNumber = Math.min(Math.max(page, 1), doc.numPages);
+        const pdfPage = await doc.getPage(pageNumber);
+
+        const containerWidth =
+          containerRef.current?.clientWidth || pdfPage.view[2] || 600;
+        const unscaled = pdfPage.getViewport({ scale: 1 });
+        const scale = Math.min(containerWidth / unscaled.width, 2.5);
+        const viewport = pdfPage.getViewport({ scale });
+
+        const canvas = canvasRef.current;
+        if (!canvas || cancelled) {
+          return;
+        }
+
+        const context = canvas.getContext("2d");
+        if (!context) {
+          throw new Error("Canvas unavailable");
+        }
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+
+        renderTask = pdfPage.render({
+          canvasContext: context,
+          viewport,
+          canvas,
+        });
+        await renderTask.promise;
+
+        if (cancelled) return;
+
+        setPageSize({ width: viewport.width, height: viewport.height });
+
+        const textContent = await pdfPage.getTextContent();
+        const rawItems = textContent.items.filter(
+          (
+            item,
+          ): item is (typeof textContent.items)[number] & {
+            str: string;
+            transform: number[];
+            width: number;
+            height: number;
+          } => "str" in item,
+        );
+
+        const model = buildTextLayerModel(rawItems, viewport);
+        const ranges = findCitationRanges({
+          haystack: model.haystack,
+          quote: highlight?.content ?? "",
+        });
+        const rects = rangesToRects(model.items, ranges);
+
+        if (!cancelled) {
+          setHighlightRects(rects);
+        }
+
+        await doc.cleanup();
+      } catch (error) {
+        if (!cancelled) {
+          const message =
+            error instanceof Error ? error.message : "Failed to render PDF";
+          // Cancellation during citation switches is expected
+          if (!/cancel/i.test(message)) {
+            setFileError(message);
+          }
+          setHighlightRects([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setRendering(false);
+        }
+      }
+    }
+
+    void renderPage();
+
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+      void loadingTask?.destroy();
+    };
+  }, [pdfData, page, highlight?.content, animateKey]);
+
+  useEffect(() => {
+    if (highlightRects.length === 0) return;
+    const first = containerRef.current?.querySelector(
+      "[data-pdf-highlight]",
+    ) as HTMLElement | null;
+    first?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlightRects, animateKey]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="rounded-xl border border-[var(--line)] bg-[var(--chip-bg)] px-3 py-2 text-xs text-[var(--sea-ink-soft)]">
         Page {page}
-        {highlight ? " · cited region highlighted below" : ""}
+        {highlight
+          ? highlightRects.length > 0
+            ? " · citation highlighted in PDF"
+            : " · jump to page · see cited text below"
+          : ""}
       </div>
 
-      <div className="min-h-[240px] flex-1 overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--foam)]">
-        {loadingFile ? (
-          <div className="flex h-full items-center justify-center gap-2 text-sm text-[var(--sea-ink-soft)]">
+      <div
+        ref={containerRef}
+        className="relative min-h-[280px] flex-1 overflow-auto rounded-xl border border-[var(--line)] bg-[var(--foam)]"
+      >
+        {loadingFile || rendering ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-[color-mix(in_oklab,var(--foam)_80%,transparent)] text-sm text-[var(--sea-ink-soft)]">
             <LoaderCircle className="size-4 animate-spin" />
-            Loading PDF…
+            {loadingFile ? "Loading PDF…" : "Rendering page…"}
           </div>
-        ) : fileError ? (
-          <div className="flex h-full items-center justify-center px-4 text-center text-sm text-destructive">
+        ) : null}
+
+        {fileError ? (
+          <div className="flex h-full min-h-[240px] items-center justify-center px-4 text-center text-sm text-destructive">
             {fileError}
           </div>
-        ) : iframeSrc ? (
-          <iframe
-            title={`PDF page ${page}`}
-            src={iframeSrc}
-            className="h-full min-h-[240px] w-full"
-          />
         ) : (
-          <div className="flex h-full items-center justify-center px-4 text-sm text-[var(--sea-ink-soft)]">
-            PDF preview unavailable
+          <div
+            className="relative mx-auto"
+            style={{
+              width: pageSize.width || "100%",
+              height: pageSize.height || undefined,
+            }}
+          >
+            <canvas ref={canvasRef} className="block max-w-full" />
+            {highlightRects.map((rect, index) => (
+              <div
+                key={`${animateKey ?? "h"}-${index}-${rect.left}-${rect.top}`}
+                data-pdf-highlight
+                className="citation-highlight-pulse pointer-events-none absolute rounded-sm bg-[color-mix(in_oklab,var(--lagoon)_42%,transparent)] mix-blend-multiply ring-1 ring-[color-mix(in_oklab,var(--lagoon)_55%,transparent)]"
+                style={{
+                  left: rect.left,
+                  top: rect.top,
+                  width: rect.width,
+                  height: rect.height,
+                }}
+              />
+            ))}
           </div>
         )}
       </div>
 
-      <div className="max-h-[40%] overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-3">
+      <div className="max-h-[32%] overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-3">
         <p className="mb-2 text-xs font-medium tracking-wide text-[var(--kicker)] uppercase">
           Cited text
         </p>
@@ -124,11 +261,10 @@ export function PdfViewer({
               highlight
                 ? {
                     ...highlight,
-                    // Page-local offsets may not match joined page text; quote match
                     locator: {
                       ...highlight.locator,
-                      startOffset: undefined,
-                      endOffset: undefined,
+                      startOffset: 0,
+                      endOffset: (highlight.content || pageText).length,
                     },
                   }
                 : null

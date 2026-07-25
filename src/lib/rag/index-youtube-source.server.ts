@@ -4,9 +4,11 @@ import { db } from "#/db/index.ts";
 import { sources } from "#/db/schema/sources.ts";
 import { chunkVttCues } from "#/lib/rag/chunk-vtt.ts";
 import { extractYoutubeTranscript } from "#/lib/rag/extract-youtube.server.ts";
+import { friendlyIngestError } from "#/lib/ingest/limits.ts";
 import {
   clearSourceIndex,
   persistSourceChunks,
+  setSourceIndexProgress,
   setSourceStatus,
 } from "#/lib/rag/index-source.server.ts";
 
@@ -44,6 +46,12 @@ export async function indexYoutubeSource(options: {
   await clearSourceIndex(sourceId);
 
   try {
+    await setSourceIndexProgress(sourceId, {
+      phase: "extracting",
+      percent: 15,
+      message: "Fetching captions…",
+    });
+
     const extracted = await extractYoutubeTranscript(options.urlOrId);
     const { plainText, chunks } = chunkVttCues(extracted.cues, {
       videoId: extracted.videoId,
@@ -86,10 +94,10 @@ export async function indexYoutubeSource(options: {
     });
   } catch (error) {
     await clearSourceIndex(sourceId);
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Failed to index YouTube source";
+    const message = friendlyIngestError(
+      error,
+      "Failed to index YouTube source",
+    );
     await setSourceStatus(sourceId, "failed", message);
     throw error;
   }

@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as AuthenticatedNotebooksIndexRouteImport } from './routes/_authenticated/notebooks/index'
 import { Route as AuthenticatedNotebooksNotebookIdRouteImport } from './routes/_authenticated/notebooks/$notebookId'
+import { Route as ApiNotebooksNotebookIdSourceEventsRouteImport } from './routes/api/notebooks/$notebookId/source-events'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -35,16 +36,24 @@ const AuthenticatedNotebooksNotebookIdRoute =
     path: '/notebooks/$notebookId',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const ApiNotebooksNotebookIdSourceEventsRoute =
+  ApiNotebooksNotebookIdSourceEventsRouteImport.update({
+    id: '/api/notebooks/$notebookId/source-events',
+    path: '/api/notebooks/$notebookId/source-events',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/notebooks/$notebookId': typeof AuthenticatedNotebooksNotebookIdRoute
   '/notebooks/': typeof AuthenticatedNotebooksIndexRoute
+  '/api/notebooks/$notebookId/source-events': typeof ApiNotebooksNotebookIdSourceEventsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/notebooks/$notebookId': typeof AuthenticatedNotebooksNotebookIdRoute
   '/notebooks': typeof AuthenticatedNotebooksIndexRoute
+  '/api/notebooks/$notebookId/source-events': typeof ApiNotebooksNotebookIdSourceEventsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -52,23 +61,34 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/_authenticated/notebooks/$notebookId': typeof AuthenticatedNotebooksNotebookIdRoute
   '/_authenticated/notebooks/': typeof AuthenticatedNotebooksIndexRoute
+  '/api/notebooks/$notebookId/source-events': typeof ApiNotebooksNotebookIdSourceEventsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/notebooks/$notebookId' | '/notebooks/'
+  fullPaths:
+    | '/'
+    | '/notebooks/$notebookId'
+    | '/notebooks/'
+    | '/api/notebooks/$notebookId/source-events'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/notebooks/$notebookId' | '/notebooks'
+  to:
+    | '/'
+    | '/notebooks/$notebookId'
+    | '/notebooks'
+    | '/api/notebooks/$notebookId/source-events'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/_authenticated/notebooks/$notebookId'
     | '/_authenticated/notebooks/'
+    | '/api/notebooks/$notebookId/source-events'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
+  ApiNotebooksNotebookIdSourceEventsRoute: typeof ApiNotebooksNotebookIdSourceEventsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -101,6 +121,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedNotebooksNotebookIdRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/api/notebooks/$notebookId/source-events': {
+      id: '/api/notebooks/$notebookId/source-events'
+      path: '/api/notebooks/$notebookId/source-events'
+      fullPath: '/api/notebooks/$notebookId/source-events'
+      preLoaderRoute: typeof ApiNotebooksNotebookIdSourceEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -121,6 +148,8 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
+  ApiNotebooksNotebookIdSourceEventsRoute:
+    ApiNotebooksNotebookIdSourceEventsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

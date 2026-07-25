@@ -1,8 +1,10 @@
 import { chunkVttCues } from "#/lib/rag/chunk-vtt.ts";
 import { parseWebVtt } from "#/lib/rag/parse-vtt.server.ts";
+import { friendlyIngestError } from "#/lib/ingest/limits.ts";
 import {
   clearSourceIndex,
   persistSourceChunks,
+  setSourceIndexProgress,
   setSourceStatus,
 } from "#/lib/rag/index-source.server.ts";
 import { readSourceFile } from "#/lib/storage/files.server.ts";
@@ -39,6 +41,12 @@ export async function indexVttSource(options: {
   await clearSourceIndex(sourceId);
 
   try {
+    await setSourceIndexProgress(sourceId, {
+      phase: "extracting",
+      percent: 15,
+      message: "Parsing transcript…",
+    });
+
     const fileBuffer = await readSourceFile(storageUri);
     const raw = fileBuffer.toString("utf8");
     const parsed = parseWebVtt(raw);
@@ -61,8 +69,7 @@ export async function indexVttSource(options: {
     });
   } catch (error) {
     await clearSourceIndex(sourceId);
-    const message =
-      error instanceof Error ? error.message : "Failed to index VTT source";
+    const message = friendlyIngestError(error, "Failed to index VTT source");
     await setSourceStatus(sourceId, "failed", message);
     throw error;
   }

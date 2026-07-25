@@ -7,9 +7,11 @@ import {
   extractUrlArticle,
   normalizeUrl,
 } from "#/lib/rag/extract-url.server.ts";
+import { friendlyIngestError } from "#/lib/ingest/limits.ts";
 import {
   clearSourceIndex,
   persistSourceChunks,
+  setSourceIndexProgress,
   setSourceStatus,
 } from "#/lib/rag/index-source.server.ts";
 
@@ -40,6 +42,12 @@ export async function indexUrlSource(options: {
   await clearSourceIndex(sourceId);
 
   try {
+    await setSourceIndexProgress(sourceId, {
+      phase: "extracting",
+      percent: 15,
+      message: "Fetching page…",
+    });
+
     const article = await extractUrlArticle(url);
     const preparedChunks = chunkArticleText(article.content, {
       url: article.canonicalUrl,
@@ -81,8 +89,7 @@ export async function indexUrlSource(options: {
     });
   } catch (error) {
     await clearSourceIndex(sourceId);
-    const message =
-      error instanceof Error ? error.message : "Failed to index URL source";
+    const message = friendlyIngestError(error, "Failed to index URL source");
     await setSourceStatus(sourceId, "failed", message);
     throw error;
   }

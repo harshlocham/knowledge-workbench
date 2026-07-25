@@ -48,6 +48,11 @@ import {
   type SourceDTO,
 } from "#/features/sources/sources.functions.ts";
 import type { MessageCitation } from "#/db/schema/messages.ts";
+import {
+  formatBytes,
+  friendlyIngestError,
+  INGEST_LIMITS,
+} from "#/lib/ingest/limits.ts";
 
 async function fileToBase64(file: File) {
   const buffer = await file.arrayBuffer();
@@ -190,25 +195,53 @@ function NotebookWorkspacePage() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAsking]);
 
+  const hasPendingSources = useMemo(
+    () => sources.some((source) => isPendingStatus(source.status)),
+    [sources],
+  );
+
   useEffect(() => {
-    const hasPending = sources.some((source) => isPendingStatus(source.status));
-    if (!hasPending) {
+    if (!hasPendingSources) {
       return;
     }
 
-    const timer = window.setInterval(async () => {
-      try {
-        const next = await listSourcesFn({
-          data: { notebookId: notebook.id },
-        });
-        setSources(next);
-      } catch {
-        // keep last known state
-      }
-    }, 2000);
+    const streamUrl = `/api/notebooks/${notebook.id}/source-events`;
+    const events = new EventSource(streamUrl);
+    let fallbackTimer: number | undefined;
 
-    return () => window.clearInterval(timer);
-  }, [sources, notebook.id, listSourcesFn]);
+    events.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as {
+          type: string;
+          sources?: SourceDTO[];
+        };
+        if (payload.type === "sources" && Array.isArray(payload.sources)) {
+          setSources(payload.sources);
+        }
+        if (payload.type === "done") {
+          events.close();
+          void router.invalidate();
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    };
+
+    events.onerror = () => {
+      events.close();
+      // Fallback polling if the stream drops
+      fallbackTimer = window.setInterval(() => {
+        void listSourcesFn({ data: { notebookId: notebook.id } })
+          .then(setSources)
+          .catch(() => undefined);
+      }, 2000);
+    };
+
+    return () => {
+      events.close();
+      if (fallbackTimer) window.clearInterval(fallbackTimer);
+    };
+  }, [hasPendingSources, notebook.id, listSourcesFn, router]);
 
   const readyCount = useMemo(
     () => sources.filter((source) => source.status === "ready").length,
@@ -331,6 +364,11 @@ function NotebookWorkspacePage() {
         if (pdfFile.type !== "application/pdf") {
           throw new Error("File must be a PDF");
         }
+        if (pdfFile.size > INGEST_LIMITS.maxPdfBytes) {
+          throw new Error(
+            `PDF must be ${formatBytes(INGEST_LIMITS.maxPdfBytes)} or smaller`,
+          );
+        }
         const fileBase64 = await fileToBase64(pdfFile);
         created = await createPdfSourceFn({
           data: {
@@ -362,6 +400,11 @@ function NotebookWorkspacePage() {
         if (!isVtt) {
           throw new Error("File must be a .vtt transcript");
         }
+        if (vttFile.size > INGEST_LIMITS.maxVttBytes) {
+          throw new Error(
+            `VTT must be ${formatBytes(INGEST_LIMITS.maxVttBytes)} or smaller`,
+          );
+        }
         const fileBase64 = await fileToBase64(vttFile);
         created = await createVttSourceFn({
           data: {
@@ -392,11 +435,9 @@ function NotebookWorkspacePage() {
       setVttFile(null);
       setShowAddSource(false);
       setSources((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
-      await router.invalidate();
+      // Indexing continues in the background; SSE updates status/progress
     } catch (err) {
-      setSourceError(
-        err instanceof Error ? err.message : "Failed to add source",
-      );
+      setSourceError(friendlyIngestError(err, "Failed to add source"));
     } finally {
       setIsAddingSource(false);
     }
@@ -412,9 +453,7 @@ function NotebookWorkspacePage() {
         prev.map((source) => (source.id === sourceId ? updated : source)),
       );
     } catch (err) {
-      setSourceError(
-        err instanceof Error ? err.message : "Failed to re-index source",
-      );
+      setSourceError(friendlyIngestError(err, "Failed to re-index source"));
     } finally {
       setBusySourceId(null);
     }
@@ -708,7 +747,15 @@ function NotebookWorkspacePage() {
                         <p className="truncate text-sm font-medium text-[var(--sea-ink)]">
                           {source.title}
                         </p>
-                        <SourceStatusBadge status={source.status} />
+                        <SourceStatusBadge
+                          status={source.status}
+                          progressLabel={
+                            isPendingStatus(source.status) &&
+                            source.indexProgress
+                              ? `${source.indexProgress.percent}%`
+                              : null
+                          }
+                        />
                       </div>
                       <p className="mt-1 truncate text-xs text-[var(--sea-ink-soft)]">
                         {source.type}
@@ -722,8 +769,17 @@ function NotebookWorkspacePage() {
                           ? ` · ${source.originalUrl.replace(/^https?:\/\//, "")}`
                           : ""}
                       </p>
+                      {isPendingStatus(source.status) &&
+                      source.indexProgress?.message ? (
+                        <p className="mt-1 line-clamp-2 text-xs text-[var(--lagoon-deep)]">
+                          {source.indexProgress.message}
+                        </p>
+                      ) : null}
                       {source.status === "failed" && source.errorMessage ? (
-                        <p className="mt-1 line-clamp-2 text-xs text-destructive">
+                        <p
+                          className="mt-1 line-clamp-3 text-xs text-destructive"
+                          role="alert"
+                        >
                           {source.errorMessage}
                         </p>
                       ) : null}

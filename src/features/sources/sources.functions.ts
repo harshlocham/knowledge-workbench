@@ -9,13 +9,27 @@ import {
   requireOwnedNotebook,
   requireOwnedSource,
 } from "#/features/sources/notebook-access.server.ts";
+import { enqueueBackgroundJob } from "#/lib/ingest/jobs.server.ts";
+import {
+  formatBytes,
+  friendlyIngestError,
+  INGEST_LIMITS,
+} from "#/lib/ingest/limits.ts";
+import {
+  assertCreateRateLimit,
+  assertNotebookSourceCapacity,
+} from "#/lib/ingest/rate-limit.server.ts";
 import { normalizeUrl } from "#/lib/rag/extract-url.server.ts";
 import {
   extractYoutubeVideoId,
   youtubeWatchUrl,
 } from "#/lib/rag/extract-youtube.server.ts";
 import { indexPdfSource } from "#/lib/rag/index-pdf-source.server.ts";
-import { clearSourceIndex } from "#/lib/rag/index-source.server.ts";
+import {
+  clearSourceIndex,
+  setSourceStatus,
+  type IndexProgress,
+} from "#/lib/rag/index-source.server.ts";
 import {
   indexTextSource,
   reindexTextSource,
@@ -43,6 +57,7 @@ export type SourceDTO = {
   charCount: number | null;
   chunkCount: number | null;
   pageCount: number | null;
+  indexProgress: IndexProgress | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -53,6 +68,29 @@ function readMetaNumber(metadata: unknown, key: string): number | null {
   }
   const value = (metadata as Record<string, unknown>)[key];
   return typeof value === "number" ? value : null;
+}
+
+function readIndexProgress(metadata: unknown): IndexProgress | null {
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+  const value = (metadata as Record<string, unknown>).indexProgress;
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const progress = value as Partial<IndexProgress>;
+  if (
+    typeof progress.phase !== "string" ||
+    typeof progress.percent !== "number" ||
+    typeof progress.message !== "string"
+  ) {
+    return null;
+  }
+  return {
+    phase: progress.phase as IndexProgress["phase"],
+    percent: progress.percent,
+    message: progress.message,
+  };
 }
 
 function toSourceDTO(row: typeof sources.$inferSelect): SourceDTO {
@@ -67,6 +105,7 @@ function toSourceDTO(row: typeof sources.$inferSelect): SourceDTO {
     charCount: readMetaNumber(row.metadata, "charCount"),
     chunkCount: readMetaNumber(row.metadata, "chunkCount"),
     pageCount: readMetaNumber(row.metadata, "pageCount"),
+    indexProgress: readIndexProgress(row.metadata),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -90,6 +129,13 @@ async function refreshSource(sourceId: string) {
   return toSourceDTO(fresh);
 }
 
+async function beginCreate(notebookId: string) {
+  const { userId } = await requireOwnedNotebook(notebookId);
+  assertCreateRateLimit(userId);
+  await assertNotebookSourceCapacity(notebookId);
+  return { userId };
+}
+
 export const listSources = createServerFn({ method: "GET" })
   .validator(z.object({ notebookId: z.string().uuid() }))
   .handler(async ({ data }) => {
@@ -108,12 +154,23 @@ export const createTextSource = createServerFn({ method: "POST" })
   .validator(
     z.object({
       notebookId: z.string().uuid(),
-      title: z.string().trim().min(1).max(200),
-      content: z.string().trim().min(1).max(200_000),
+      title: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INGEST_LIMITS.maxTitleLength),
+      content: z
+        .string()
+        .trim()
+        .min(1)
+        .max(
+          INGEST_LIMITS.maxTextChars,
+          `Text must be ${INGEST_LIMITS.maxTextChars.toLocaleString()} characters or fewer`,
+        ),
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await requireOwnedNotebook(data.notebookId);
+    const { userId } = await beginCreate(data.notebookId);
 
     const metadata: TextSourceMetadata = {
       content: data.content,
@@ -126,8 +183,15 @@ export const createTextSource = createServerFn({ method: "POST" })
         notebookId: data.notebookId,
         type: "text",
         title: data.title,
-        status: "uploading",
-        metadata,
+        status: "indexing",
+        metadata: {
+          ...metadata,
+          indexProgress: {
+            phase: "queued",
+            percent: 5,
+            message: "Queued for indexing…",
+          },
+        },
       })
       .returning();
 
@@ -135,16 +199,14 @@ export const createTextSource = createServerFn({ method: "POST" })
       throw new Error("Failed to create source");
     }
 
-    try {
+    enqueueBackgroundJob(`index-text:${row.id}`, async () => {
       await indexTextSource({
         sourceId: row.id,
         notebookId: data.notebookId,
         ownerId: userId,
         content: data.content,
       });
-    } catch {
-      // Status already marked failed inside indexer
-    }
+    });
 
     return refreshSource(row.id);
   });
@@ -153,22 +215,31 @@ export const createPdfSource = createServerFn({ method: "POST" })
   .validator(
     z.object({
       notebookId: z.string().uuid(),
-      title: z.string().trim().min(1).max(200),
-      fileName: z.string().trim().min(1).max(260),
+      title: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INGEST_LIMITS.maxTitleLength),
+      fileName: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INGEST_LIMITS.maxFileNameLength),
       fileBase64: z.string().min(1),
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await requireOwnedNotebook(data.notebookId);
+    const { userId } = await beginCreate(data.notebookId);
 
     const bytes = decodeBase64(data.fileBase64);
     if (bytes.byteLength === 0) {
       throw new Error("PDF file is empty");
     }
 
-    // ~20MB decoded limit for local uploads
-    if (bytes.byteLength > 20 * 1024 * 1024) {
-      throw new Error("PDF must be 20MB or smaller");
+    if (bytes.byteLength > INGEST_LIMITS.maxPdfBytes) {
+      throw new Error(
+        `PDF must be ${formatBytes(INGEST_LIMITS.maxPdfBytes)} or smaller`,
+      );
     }
 
     const [row] = await db
@@ -192,16 +263,36 @@ export const createPdfSource = createServerFn({ method: "POST" })
     const storageKey = pdfStorageKey(data.notebookId, row.id);
 
     try {
-      await saveSourceFile({ storageKey, data: bytes });
+      await saveSourceFile({
+        storageKey,
+        data: bytes,
+        contentType: "application/pdf",
+      });
 
       await db
         .update(sources)
         .set({
           storageUri: storageKey,
+          status: "indexing",
+          metadata: {
+            originalFileName: data.fileName,
+            mimeType: "application/pdf",
+            indexProgress: {
+              phase: "queued",
+              percent: 5,
+              message: "Queued for indexing…",
+            },
+          },
           updatedAt: new Date(),
         })
         .where(eq(sources.id, row.id));
+    } catch (error) {
+      const message = friendlyIngestError(error, "Failed to store PDF");
+      await setSourceStatus(row.id, "failed", message);
+      return refreshSource(row.id);
+    }
 
+    enqueueBackgroundJob(`index-pdf:${row.id}`, async () => {
       await indexPdfSource({
         sourceId: row.id,
         notebookId: data.notebookId,
@@ -212,9 +303,7 @@ export const createPdfSource = createServerFn({ method: "POST" })
           mimeType: "application/pdf",
         },
       });
-    } catch {
-      // Indexer/storage errors mark failed; keep row for retry/re-index
-    }
+    });
 
     return refreshSource(row.id);
   });
@@ -223,18 +312,18 @@ export const createUrlSource = createServerFn({ method: "POST" })
   .validator(
     z.object({
       notebookId: z.string().uuid(),
-      url: z.string().trim().min(1).max(2000),
-      title: z.string().trim().max(200).optional(),
+      url: z.string().trim().min(1).max(INGEST_LIMITS.maxUrlLength),
+      title: z.string().trim().max(INGEST_LIMITS.maxTitleLength).optional(),
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await requireOwnedNotebook(data.notebookId);
+    const { userId } = await beginCreate(data.notebookId);
 
     let url: string;
     try {
       url = normalizeUrl(data.url);
     } catch {
-      throw new Error("Enter a valid website URL");
+      throw new Error("Enter a valid website URL (https://…)");
     }
 
     const title =
@@ -253,9 +342,15 @@ export const createUrlSource = createServerFn({ method: "POST" })
         notebookId: data.notebookId,
         type: "url",
         title,
-        status: "uploading",
+        status: "indexing",
         originalUrl: url,
-        metadata: {},
+        metadata: {
+          indexProgress: {
+            phase: "queued",
+            percent: 5,
+            message: "Queued for indexing…",
+          },
+        },
       })
       .returning();
 
@@ -263,7 +358,7 @@ export const createUrlSource = createServerFn({ method: "POST" })
       throw new Error("Failed to create URL source");
     }
 
-    try {
+    enqueueBackgroundJob(`index-url:${row.id}`, async () => {
       await indexUrlSource({
         sourceId: row.id,
         notebookId: data.notebookId,
@@ -271,9 +366,7 @@ export const createUrlSource = createServerFn({ method: "POST" })
         url,
         updateTitleFromPage: !data.title?.trim(),
       });
-    } catch {
-      // Status already marked failed inside indexer
-    }
+    });
 
     return refreshSource(row.id);
   });
@@ -282,21 +375,31 @@ export const createVttSource = createServerFn({ method: "POST" })
   .validator(
     z.object({
       notebookId: z.string().uuid(),
-      title: z.string().trim().min(1).max(200),
-      fileName: z.string().trim().min(1).max(260),
+      title: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INGEST_LIMITS.maxTitleLength),
+      fileName: z
+        .string()
+        .trim()
+        .min(1)
+        .max(INGEST_LIMITS.maxFileNameLength),
       fileBase64: z.string().min(1),
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await requireOwnedNotebook(data.notebookId);
+    const { userId } = await beginCreate(data.notebookId);
 
     const bytes = decodeBase64(data.fileBase64);
     if (bytes.byteLength === 0) {
       throw new Error("VTT file is empty");
     }
 
-    if (bytes.byteLength > 10 * 1024 * 1024) {
-      throw new Error("VTT must be 10MB or smaller");
+    if (bytes.byteLength > INGEST_LIMITS.maxVttBytes) {
+      throw new Error(
+        `VTT must be ${formatBytes(INGEST_LIMITS.maxVttBytes)} or smaller`,
+      );
     }
 
     const [row] = await db
@@ -320,16 +423,36 @@ export const createVttSource = createServerFn({ method: "POST" })
     const storageKey = vttStorageKey(data.notebookId, row.id);
 
     try {
-      await saveSourceFile({ storageKey, data: bytes });
+      await saveSourceFile({
+        storageKey,
+        data: bytes,
+        contentType: "text/vtt",
+      });
 
       await db
         .update(sources)
         .set({
           storageUri: storageKey,
+          status: "indexing",
+          metadata: {
+            originalFileName: data.fileName,
+            mimeType: "text/vtt",
+            indexProgress: {
+              phase: "queued",
+              percent: 5,
+              message: "Queued for indexing…",
+            },
+          },
           updatedAt: new Date(),
         })
         .where(eq(sources.id, row.id));
+    } catch (error) {
+      const message = friendlyIngestError(error, "Failed to store VTT");
+      await setSourceStatus(row.id, "failed", message);
+      return refreshSource(row.id);
+    }
 
+    enqueueBackgroundJob(`index-vtt:${row.id}`, async () => {
       await indexVttSource({
         sourceId: row.id,
         notebookId: data.notebookId,
@@ -340,9 +463,7 @@ export const createVttSource = createServerFn({ method: "POST" })
           mimeType: "text/vtt",
         },
       });
-    } catch {
-      // Status already marked failed inside indexer when applicable
-    }
+    });
 
     return refreshSource(row.id);
   });
@@ -351,12 +472,12 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
   .validator(
     z.object({
       notebookId: z.string().uuid(),
-      url: z.string().trim().min(1).max(2000),
-      title: z.string().trim().max(200).optional(),
+      url: z.string().trim().min(1).max(INGEST_LIMITS.maxUrlLength),
+      title: z.string().trim().max(INGEST_LIMITS.maxTitleLength).optional(),
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await requireOwnedNotebook(data.notebookId);
+    const { userId } = await beginCreate(data.notebookId);
 
     let videoId: string;
     try {
@@ -376,9 +497,16 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
         notebookId: data.notebookId,
         type: "youtube",
         title,
-        status: "uploading",
+        status: "indexing",
         originalUrl: watchUrl,
-        metadata: { videoId },
+        metadata: {
+          videoId,
+          indexProgress: {
+            phase: "queued",
+            percent: 5,
+            message: "Queued for indexing…",
+          },
+        },
       })
       .returning();
 
@@ -386,7 +514,7 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
       throw new Error("Failed to create YouTube source");
     }
 
-    try {
+    enqueueBackgroundJob(`index-youtube:${row.id}`, async () => {
       await indexYoutubeSource({
         sourceId: row.id,
         notebookId: data.notebookId,
@@ -395,9 +523,7 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
         updateTitleFromVideo: !data.title?.trim(),
         existingMetadata: { videoId },
       });
-    } catch {
-      // Status already marked failed inside indexer
-    }
+    });
 
     return refreshSource(row.id);
   });
@@ -406,83 +532,89 @@ export const reindexSource = createServerFn({ method: "POST" })
   .validator(z.object({ sourceId: z.string().uuid() }))
   .handler(async ({ data }) => {
     const { userId, source } = await requireOwnedSource(data.sourceId);
+    assertCreateRateLimit(userId);
 
-    try {
-      if (source.type === "text") {
-        await reindexTextSource({
-          sourceId: source.id,
-          notebookId: source.notebookId,
-          ownerId: userId,
-          metadata: source.metadata,
-        });
-      } else if (source.type === "pdf") {
-        if (!source.storageUri) {
-          throw new Error("PDF file is missing from storage");
+    await setSourceStatus(source.id, "indexing");
+
+    enqueueBackgroundJob(`reindex:${source.id}`, async () => {
+      try {
+        if (source.type === "text") {
+          await reindexTextSource({
+            sourceId: source.id,
+            notebookId: source.notebookId,
+            ownerId: userId,
+            metadata: source.metadata,
+          });
+        } else if (source.type === "pdf") {
+          if (!source.storageUri) {
+            throw new Error("PDF file is missing from storage");
+          }
+
+          await indexPdfSource({
+            sourceId: source.id,
+            notebookId: source.notebookId,
+            ownerId: userId,
+            storageUri: source.storageUri,
+            existingMetadata:
+              source.metadata && typeof source.metadata === "object"
+                ? (source.metadata as Record<string, unknown>)
+                : {},
+          });
+        } else if (source.type === "url") {
+          if (!source.originalUrl) {
+            throw new Error("URL source is missing originalUrl");
+          }
+
+          await indexUrlSource({
+            sourceId: source.id,
+            notebookId: source.notebookId,
+            ownerId: userId,
+            url: source.originalUrl,
+            updateTitleFromPage: false,
+          });
+        } else if (source.type === "vtt") {
+          if (!source.storageUri) {
+            throw new Error("VTT file is missing from storage");
+          }
+
+          await indexVttSource({
+            sourceId: source.id,
+            notebookId: source.notebookId,
+            ownerId: userId,
+            storageUri: source.storageUri,
+            existingMetadata:
+              source.metadata && typeof source.metadata === "object"
+                ? (source.metadata as Record<string, unknown>)
+                : {},
+          });
+        } else if (source.type === "youtube") {
+          const meta = source.metadata as { videoId?: string } | null;
+          const urlOrId = source.originalUrl || meta?.videoId;
+          if (!urlOrId) {
+            throw new Error("YouTube source is missing video URL");
+          }
+
+          await indexYoutubeSource({
+            sourceId: source.id,
+            notebookId: source.notebookId,
+            ownerId: userId,
+            urlOrId,
+            updateTitleFromVideo: false,
+            existingMetadata:
+              source.metadata && typeof source.metadata === "object"
+                ? (source.metadata as Record<string, unknown>)
+                : {},
+          });
+        } else {
+          throw new Error(
+            `Re-index is not implemented for source type: ${source.type}`,
+          );
         }
-
-        await indexPdfSource({
-          sourceId: source.id,
-          notebookId: source.notebookId,
-          ownerId: userId,
-          storageUri: source.storageUri,
-          existingMetadata:
-            source.metadata && typeof source.metadata === "object"
-              ? (source.metadata as Record<string, unknown>)
-              : {},
-        });
-      } else if (source.type === "url") {
-        if (!source.originalUrl) {
-          throw new Error("URL source is missing originalUrl");
-        }
-
-        await indexUrlSource({
-          sourceId: source.id,
-          notebookId: source.notebookId,
-          ownerId: userId,
-          url: source.originalUrl,
-          updateTitleFromPage: false,
-        });
-      } else if (source.type === "vtt") {
-        if (!source.storageUri) {
-          throw new Error("VTT file is missing from storage");
-        }
-
-        await indexVttSource({
-          sourceId: source.id,
-          notebookId: source.notebookId,
-          ownerId: userId,
-          storageUri: source.storageUri,
-          existingMetadata:
-            source.metadata && typeof source.metadata === "object"
-              ? (source.metadata as Record<string, unknown>)
-              : {},
-        });
-      } else if (source.type === "youtube") {
-        const meta = source.metadata as { videoId?: string } | null;
-        const urlOrId = source.originalUrl || meta?.videoId;
-        if (!urlOrId) {
-          throw new Error("YouTube source is missing video URL");
-        }
-
-        await indexYoutubeSource({
-          sourceId: source.id,
-          notebookId: source.notebookId,
-          ownerId: userId,
-          urlOrId,
-          updateTitleFromVideo: false,
-          existingMetadata:
-            source.metadata && typeof source.metadata === "object"
-              ? (source.metadata as Record<string, unknown>)
-              : {},
-        });
-      } else {
-        throw new Error(
-          `Re-index is not implemented for source type: ${source.type}`,
-        );
+      } catch (error) {
+        const message = friendlyIngestError(error, "Failed to re-index source");
+        await setSourceStatus(source.id, "failed", message);
       }
-    } catch {
-      // Status already marked failed inside indexer when applicable
-    }
+    });
 
     return refreshSource(source.id);
   });
