@@ -26,6 +26,7 @@ import type { MessageCitation } from "#/db/schema/messages.ts";
 import {
   askNotebook,
   getSourceViewer,
+  listMessages,
   type ChatMessageDTO,
 } from "#/features/chat/chat.functions.ts";
 import {
@@ -88,6 +89,7 @@ export function NotebookWorkspace({
   const reindexSourceFn = useServerFn(reindexSource);
   const listSourcesFn = useServerFn(listSources);
   const askNotebookFn = useServerFn(askNotebook);
+  const listMessagesFn = useServerFn(listMessages);
   const getSourceViewerFn = useServerFn(getSourceViewer);
   const buildLearningRoadmapFn = useServerFn(buildLearningRoadmap);
   const updateNotebookFn = useServerFn(updateNotebook);
@@ -103,6 +105,13 @@ export function NotebookWorkspace({
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const autoTitleEnabledRef = useRef(isUntitledNotebookTitle(notebook.title));
   const titleSyncInFlightRef = useRef(false);
+  const readySourceIdsRef = useRef(
+    new Set(
+      initialSources
+        .filter((source) => source.status === "ready")
+        .map((source) => source.id),
+    ),
+  );
 
   const [roadmap, setRoadmap] = useState<LearningRoadmap | null>(null);
   const [roadmapFocus, setRoadmapFocus] = useState("");
@@ -196,6 +205,9 @@ export function NotebookWorkspace({
         }
         if (payload.type === "done") {
           events.close();
+          void listMessagesFn({ data: { notebookId: notebook.id } })
+            .then(setMessages)
+            .catch(() => undefined);
           void router.invalidate();
         }
       } catch {
@@ -216,7 +228,21 @@ export function NotebookWorkspace({
       events.close();
       if (fallbackTimer) window.clearInterval(fallbackTimer);
     };
-  }, [hasPendingSources, notebook.id, listSourcesFn, router]);
+  }, [hasPendingSources, notebook.id, listSourcesFn, listMessagesFn, router]);
+
+  // When a source newly becomes ready, refresh chat so the auto overview shows.
+  useEffect(() => {
+    const readyIds = sources
+      .filter((source) => source.status === "ready")
+      .map((source) => source.id);
+    const newlyReady = readyIds.some((id) => !readySourceIdsRef.current.has(id));
+    readySourceIdsRef.current = new Set(readyIds);
+    if (!newlyReady) return;
+
+    void listMessagesFn({ data: { notebookId: notebook.id } })
+      .then(setMessages)
+      .catch(() => undefined);
+  }, [sources, notebook.id, listMessagesFn]);
 
   const readyCount = useMemo(
     () => sources.filter((source) => source.status === "ready").length,

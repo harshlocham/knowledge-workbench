@@ -2,11 +2,13 @@ import { eq } from "drizzle-orm";
 
 import { db } from "#/db/index.ts";
 import { chunks } from "#/db/schema/chunks.ts";
+import { messages } from "#/db/schema/messages.ts";
 import { sources } from "#/db/schema/sources.ts";
 import { friendlyIngestError } from "#/lib/ingest/limits.ts";
 import { deletePointsBySourceId, upsertChunkPoints } from "#/lib/qdrant/points.ts";
 import type { TextChunk } from "#/lib/rag/chunk.ts";
 import { embedTexts } from "#/lib/rag/embed.ts";
+import { tryPostSourceAddedSummaryMessage } from "#/lib/rag/source-summary-message.server.ts";
 
 export type IndexProgress = {
   phase: "queued" | "extracting" | "embedding" | "storing" | "finalizing";
@@ -30,14 +32,23 @@ export async function setSourceStatus(
       ? { ...(current.metadata as Record<string, unknown>) }
       : {};
 
+  let previousSummaryMessageId: string | null = null;
+
   if (status === "ready" || status === "failed") {
     delete metadata.indexProgress;
-  } else if (status === "indexing" && !metadata.indexProgress) {
-    metadata.indexProgress = {
-      phase: "queued",
-      percent: 5,
-      message: "Queued for indexing…",
-    } satisfies IndexProgress;
+  } else if (status === "indexing") {
+    // Reindex should generate a fresh overview message.
+    if (typeof metadata.summaryMessageId === "string") {
+      previousSummaryMessageId = metadata.summaryMessageId;
+      delete metadata.summaryMessageId;
+    }
+    if (!metadata.indexProgress) {
+      metadata.indexProgress = {
+        phase: "queued",
+        percent: 5,
+        message: "Queued for indexing…",
+      } satisfies IndexProgress;
+    }
   }
 
   await db
@@ -49,6 +60,16 @@ export async function setSourceStatus(
       updatedAt: new Date(),
     })
     .where(eq(sources.id, sourceId));
+
+  if (previousSummaryMessageId) {
+    try {
+      await db
+        .delete(messages)
+        .where(eq(messages.id, previousSummaryMessageId));
+    } catch {
+      // Old overview may already be gone
+    }
+  }
 }
 
 export async function setSourceIndexProgress(
@@ -177,8 +198,44 @@ export async function persistSourceChunks(options: {
     message: "Finishing up…",
   });
 
-  const cleanedMetadata = { ...readyMetadata };
+  await setSourceIndexProgress(sourceId, {
+    phase: "finalizing",
+    percent: 98,
+    message: "Writing source overview…",
+  });
+
+  // Stay in "indexing" until the overview message is posted so SSE doesn't
+  // close before the NotebookLM-style summary appears in chat.
+  await tryPostSourceAddedSummaryMessage({
+    sourceId,
+    notebookId,
+    sourceType,
+    chunkRows: inserted.map((row) => ({
+      id: row.id,
+      content: row.content,
+      locator: row.locator,
+    })),
+  });
+
+  const [current] = await db
+    .select({ metadata: sources.metadata })
+    .from(sources)
+    .where(eq(sources.id, sourceId))
+    .limit(1);
+
+  const currentMeta =
+    current?.metadata && typeof current.metadata === "object"
+      ? { ...(current.metadata as Record<string, unknown>) }
+      : {};
+
+  const cleanedMetadata = {
+    ...currentMeta,
+    ...readyMetadata,
+  };
   delete cleanedMetadata.indexProgress;
+  if (typeof currentMeta.summaryMessageId === "string") {
+    cleanedMetadata.summaryMessageId = currentMeta.summaryMessageId;
+  }
 
   await db
     .update(sources)

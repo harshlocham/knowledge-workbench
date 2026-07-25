@@ -3,11 +3,18 @@ import { Check, Copy, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { formatCompactTime } from "#/components/notebook/source-viewer/format.ts";
 import { CitationBadge } from "#/components/workspace/CitationBadge.tsx";
 import { Button } from "#/components/ui/button.tsx";
 import type { MessageCitation } from "#/db/schema/messages.ts";
 import type { ChatMessageDTO } from "#/features/chat/chat.functions.ts";
 import { cn } from "#/lib/utils.ts";
+
+/** Stored YouTube cues may still be ms from before timing normalization. */
+function formatCitationClock(tStart: number): string {
+  const seconds = tStart >= 100_000 ? tStart / 1000 : tStart;
+  return formatCompactTime(seconds);
+}
 
 function citationKey(messageId: string, citation: MessageCitation) {
   return `${messageId}:${citation.chunkId}:${citation.citationNumber ?? ""}`;
@@ -95,7 +102,17 @@ function MarkdownWithCitations({
     };
 
   return (
-    <div className="prose prose-sm max-w-none text-foreground prose-p:my-2 prose-pre:my-3 prose-headings:font-[Fraunces,serif] prose-a:text-primary prose-code:before:content-none prose-code:after:content-none">
+    <div
+      className={cn(
+        "prose prose-sm dark:prose-invert max-w-none text-foreground",
+        "prose-p:my-2 prose-ul:my-2 prose-li:my-0.5 prose-pre:my-3",
+        "prose-headings:font-[Fraunces,serif] prose-headings:text-foreground",
+        "prose-strong:font-semibold prose-strong:text-foreground",
+        "prose-em:text-foreground",
+        "prose-a:font-medium prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
+        "prose-code:before:content-none prose-code:after:content-none",
+      )}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -177,20 +194,23 @@ export function ChatBubble({
                   type="button"
                   onClick={() => onCitationClick(citation, message.id)}
                   className={cn(
-                    "rounded-full px-2.5 py-1 text-xs font-medium transition focus-ring",
+                    "max-w-full rounded-full px-2.5 py-1 text-left text-xs font-medium transition focus-ring",
                     activeCitationKey === key
                       ? "bg-accent text-foreground ring-2 ring-primary"
-                      : "bg-muted text-muted-foreground hover:text-foreground",
+                      : "bg-muted text-foreground/80 hover:bg-muted/80 hover:text-foreground",
                   )}
                 >
-                  [{citation.citationNumber}] {citation.sourceTitle ?? "Source"}
+                  <span className="text-primary">
+                    [{citation.citationNumber}]
+                  </span>{" "}
+                  <span className="wrap-break-word">
+                    {citation.sourceTitle ?? "Source"}
+                  </span>
                   {citation.locator?.page != null
                     ? ` · p.${citation.locator.page}`
                     : ""}
                   {citation.locator?.tStart != null
-                    ? ` · ${Math.floor(citation.locator.tStart / 60)}:${String(
-                        Math.floor(citation.locator.tStart % 60),
-                      ).padStart(2, "0")}`
+                    ? ` · ${formatCitationClock(citation.locator.tStart)}`
                     : ""}
                 </button>
               );

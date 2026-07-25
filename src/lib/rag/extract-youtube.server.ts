@@ -104,9 +104,18 @@ export async function extractYoutubeTranscript(
     throw new Error("YouTube returned an empty transcript");
   }
 
+  // youtube-transcript srv3 tracks use milliseconds; classic XML uses seconds.
+  const maxOffset = Math.max(
+    ...items.map((item) => Number(item.offset) || 0),
+    0,
+  );
+  const offsetUnit = maxOffset >= 100_000 ? "ms" : "s";
+
   const cues: VttCue[] = items.map((item, cueIndex) => {
-    const tStart = Math.max(0, Number(item.offset) || 0);
-    const duration = Math.max(0, Number(item.duration) || 0);
+    const rawStart = Math.max(0, Number(item.offset) || 0);
+    const rawDuration = Math.max(0, Number(item.duration) || 0);
+    const tStart = offsetUnit === "ms" ? rawStart / 1000 : rawStart;
+    const duration = offsetUnit === "ms" ? rawDuration / 1000 : rawDuration;
     return {
       cueIndex,
       tStart,
