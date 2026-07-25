@@ -16,6 +16,8 @@ export function TranscriptViewer({
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const [playerSeconds, setPlayerSeconds] = useState<number | null>(null);
+  /** Remount + autoplay only after an explicit seek (cue click / citation). */
+  const [playToken, setPlayToken] = useState(0);
 
   const activeCueIndexes = useMemo(() => {
     if (!highlight?.locator) {
@@ -35,9 +37,18 @@ export function TranscriptViewer({
     playerSeconds ?? highlight?.locator?.tStart ?? 0,
   );
 
+  const seekAndPlay = (seconds: number) => {
+    setPlayerSeconds(seconds);
+    setPlayToken((token) => token + 1);
+  };
+
   useEffect(() => {
-    if (highlight?.locator?.tStart != null) {
-      setPlayerSeconds(highlight.locator.tStart);
+    if (highlight?.locator?.tStart == null) {
+      return;
+    }
+    setPlayerSeconds(highlight.locator.tStart);
+    if (animateKey) {
+      setPlayToken((token) => token + 1);
     }
   }, [highlight?.chunkId, highlight?.locator?.tStart, animateKey]);
 
@@ -51,8 +62,9 @@ export function TranscriptViewer({
     }
   }, [animateKey, activeCueIndexes, highlight?.chunkId]);
 
+  const shouldAutoplay = playToken > 0;
   const embedUrl = videoId
-    ? `https://www.youtube.com/embed/${videoId}?start=${Math.max(0, seekSeconds)}&autoplay=0&rel=0`
+    ? `https://www.youtube.com/embed/${videoId}?start=${Math.max(0, seekSeconds)}&autoplay=${shouldAutoplay ? 1 : 0}&rel=0`
     : null;
 
   return (
@@ -60,7 +72,7 @@ export function TranscriptViewer({
       {embedUrl ? (
         <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-black">
           <iframe
-            key={`${videoId}-${seekSeconds}`}
+            key={`${videoId}-${seekSeconds}-${playToken}`}
             title="YouTube citation player"
             src={embedUrl}
             className="aspect-video w-full"
@@ -89,7 +101,7 @@ export function TranscriptViewer({
               key={cue.cueIndex}
               type="button"
               data-active-cue={active ? "true" : "false"}
-              onClick={() => setPlayerSeconds(cue.tStart)}
+              onClick={() => seekAndPlay(cue.tStart)}
               className={
                 active
                   ? "citation-highlight w-full rounded-lg border border-[color-mix(in_oklab,var(--lagoon)_35%,transparent)] bg-[color-mix(in_oklab,var(--lagoon)_18%,transparent)] px-3 py-2 text-left"
