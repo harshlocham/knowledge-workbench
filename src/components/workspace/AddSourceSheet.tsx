@@ -1,9 +1,14 @@
-import { useState } from "react";
-import { Upload } from "lucide-react";
+import { useRef, useState } from "react";
+import {
+  ClipboardPaste,
+  FileUp,
+  Globe,
+  LoaderCircle,
+  Upload,
+  X,
+} from "lucide-react";
 
 import { Button } from "#/components/ui/button.tsx";
-import { Input } from "#/components/ui/input.tsx";
-import { Label } from "#/components/ui/label.tsx";
 import {
   Sheet,
   SheetContent,
@@ -12,10 +17,17 @@ import {
   SheetTitle,
 } from "#/components/ui/sheet.tsx";
 import { Textarea } from "#/components/ui/textarea.tsx";
+import {
+  classifyFile,
+  detectSourceInput,
+  isYoutubeUrl,
+} from "#/lib/detect-source.ts";
 import { formatBytes, INGEST_LIMITS } from "#/lib/ingest/limits.ts";
 import { cn } from "#/lib/utils.ts";
 
 export type AddSourceMode = "text" | "pdf" | "url" | "vtt" | "youtube";
+
+type EntryMode = "auto" | "link" | "text" | "file";
 
 export function AddSourceSheet({
   open,
@@ -38,89 +50,203 @@ export function AddSourceSheet({
   isAdding: boolean;
   error: string | null;
 }) {
-  const [mode, setMode] = useState<AddSourceMode>("pdf");
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
-  const [url, setUrl] = useState("");
-  const [youtubeUrl, setYoutubeUrl] = useState("");
-  const [pdfFile, setPdfFile] = useState<File | null>(null);
-  const [vttFile, setVttFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [entry, setEntry] = useState<EntryMode>("auto");
+  const [paste, setPaste] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
-
-  const modes: AddSourceMode[] = ["pdf", "text", "url", "vtt", "youtube"];
+  const [localError, setLocalError] = useState<string | null>(null);
 
   function reset() {
-    setTitle("");
-    setContent("");
-    setUrl("");
-    setYoutubeUrl("");
-    setPdfFile(null);
-    setVttFile(null);
+    setEntry("auto");
+    setPaste("");
+    setFile(null);
+    setLocalError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   }
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    await onSubmit({
-      mode,
-      title,
-      content,
-      url,
-      youtubeUrl,
-      pdfFile,
-      vttFile,
-    });
-    reset();
-  }
-
-  function onDropFiles(files: FileList | null) {
-    const file = files?.[0];
-    if (!file) return;
-    if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-      setMode("pdf");
-      setPdfFile(file);
-      if (!title.trim()) setTitle(file.name.replace(/\.pdf$/i, ""));
+  function acceptFile(next: File | null) {
+    if (!next) return;
+    const kind = classifyFile(next);
+    if (!kind) {
+      setLocalError("Only PDF and VTT files are supported right now.");
       return;
     }
-    if (
-      file.name.toLowerCase().endsWith(".vtt") ||
-      file.type === "text/vtt" ||
-      file.type === "text/plain"
-    ) {
-      setMode("vtt");
-      setVttFile(file);
-      if (!title.trim()) setTitle(file.name.replace(/\.vtt$/i, ""));
+    if (kind === "pdf" && next.size > INGEST_LIMITS.maxPdfBytes) {
+      setLocalError(
+        `PDF must be ${formatBytes(INGEST_LIMITS.maxPdfBytes)} or smaller`,
+      );
+      return;
+    }
+    if (kind === "vtt" && next.size > INGEST_LIMITS.maxVttBytes) {
+      setLocalError(
+        `VTT must be ${formatBytes(INGEST_LIMITS.maxVttBytes)} or smaller`,
+      );
+      return;
+    }
+    setLocalError(null);
+    setFile(next);
+    setPaste("");
+    setEntry("file");
+  }
+
+  async function handleSubmit(event?: React.FormEvent) {
+    event?.preventDefault();
+    setLocalError(null);
+
+    const detected = detectSourceInput({
+      text: file ? undefined : paste,
+      file,
+    });
+
+    if (!detected) {
+      setLocalError(
+        entry === "link"
+          ? "Paste a website or YouTube URL."
+          : entry === "text"
+            ? "Paste some text to add as a source."
+            : "Drop a file, paste a link, or paste text to continue.",
+      );
+      return;
+    }
+
+    try {
+      if (detected.kind === "pdf") {
+        await onSubmit({
+          mode: "pdf",
+          title: detected.file.name.replace(/\.pdf$/i, ""),
+          content: "",
+          url: "",
+          youtubeUrl: "",
+          pdfFile: detected.file,
+          vttFile: null,
+        });
+      } else if (detected.kind === "vtt") {
+        await onSubmit({
+          mode: "vtt",
+          title: detected.file.name.replace(/\.vtt$/i, ""),
+          content: "",
+          url: "",
+          youtubeUrl: "",
+          pdfFile: null,
+          vttFile: detected.file,
+        });
+      } else if (detected.kind === "youtube") {
+        await onSubmit({
+          mode: "youtube",
+          title: "",
+          content: "",
+          url: "",
+          youtubeUrl: detected.url,
+          pdfFile: null,
+          vttFile: null,
+        });
+      } else if (detected.kind === "url") {
+        await onSubmit({
+          mode: "url",
+          title: "",
+          content: "",
+          url: detected.url,
+          youtubeUrl: "",
+          pdfFile: null,
+          vttFile: null,
+        });
+      } else {
+        await onSubmit({
+          mode: "text",
+          title: "Text source",
+          content: detected.content,
+          url: "",
+          youtubeUrl: "",
+          pdfFile: null,
+          vttFile: null,
+        });
+      }
+      reset();
+    } catch {
+      // Parent surfaces error via `error` prop
     }
   }
 
+  const detectionHint = (() => {
+    if (file) {
+      const kind = classifyFile(file);
+      return kind === "pdf"
+        ? `Ready to add PDF · ${file.name}`
+        : kind === "vtt"
+          ? `Ready to add transcript · ${file.name}`
+          : null;
+    }
+    const trimmed = paste.trim();
+    if (!trimmed) return null;
+    if (isYoutubeUrl(trimmed)) return "Detected YouTube video";
+    const detected = detectSourceInput({ text: trimmed });
+    if (detected?.kind === "url") return "Detected website URL";
+    if (detected?.kind === "text") {
+      return `Detected text · ${trimmed.length.toLocaleString()} characters`;
+    }
+    return null;
+  })();
+
+  const placeholder =
+    entry === "link"
+      ? "Paste a website or YouTube URL…"
+      : entry === "text"
+        ? "Paste or type source text…"
+        : "Paste a link, YouTube URL, or text…";
+
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="left" className="w-full sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle>Add source</SheetTitle>
+    <Sheet
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) reset();
+        onOpenChange(next);
+      }}
+    >
+      <SheetContent side="left" className="flex w-full flex-col p-0 sm:max-w-md">
+        <SheetHeader className="border-b border-border px-4 py-4 text-left">
+          <SheetTitle>Add sources</SheetTitle>
           <SheetDescription>
-            Upload a file or paste content. Indexing continues in the background.
+            Drop files or paste a link — we’ll figure out the type for you.
           </SheetDescription>
         </SheetHeader>
 
-        <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4 px-4 pb-6">
-          <div className="flex flex-wrap gap-1">
-            {modes.map((item) => (
-              <Button
-                key={item}
-                type="button"
-                size="xs"
-                variant={mode === item ? "default" : "outline"}
-                onClick={() => setMode(item)}
-              >
-                {item}
-              </Button>
-            ))}
-          </div>
+        <form
+          onSubmit={(e) => void handleSubmit(e)}
+          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4"
+        >
+          <Textarea
+            value={paste}
+            onChange={(e) => {
+              setPaste(e.target.value);
+              setFile(null);
+              if (entry === "file") setEntry("auto");
+            }}
+            onPaste={(e) => {
+              const text = e.clipboardData.getData("text");
+              if (text && isYoutubeUrl(text.trim())) {
+                setEntry("link");
+              }
+            }}
+            placeholder={placeholder}
+            rows={entry === "text" ? 10 : 3}
+            className="min-h-[88px] resize-none bg-muted/30"
+            disabled={isAdding || Boolean(file)}
+            maxLength={INGEST_LIMITS.maxTextChars}
+          />
+
+          {detectionHint ? (
+            <p className="text-xs font-medium text-primary">{detectionHint}</p>
+          ) : null}
 
           <div
             className={cn(
-              "rounded-lg border border-dashed px-4 py-6 text-center transition-colors",
-              dragOver ? "border-primary bg-accent" : "border-border bg-muted/40",
+              "flex flex-col items-center justify-center rounded-xl border border-dashed px-4 py-10 text-center transition-colors",
+              dragOver
+                ? "border-primary bg-accent"
+                : "border-border bg-muted/30",
             )}
             onDragOver={(e) => {
               e.preventDefault();
@@ -130,100 +256,107 @@ export function AddSourceSheet({
             onDrop={(e) => {
               e.preventDefault();
               setDragOver(false);
-              onDropFiles(e.dataTransfer.files);
+              acceptFile(e.dataTransfer.files?.[0] ?? null);
             }}
           >
-            <Upload className="mx-auto size-5 text-muted-foreground" />
-            <p className="mt-2 text-sm text-muted-foreground">
-              Drop a PDF or VTT here, or choose a type below
+            <div className="flex size-11 items-center justify-center rounded-full bg-background text-muted-foreground shadow-sm ring-1 ring-border">
+              <Upload className="size-5" />
+            </div>
+            <p className="mt-3 text-sm font-medium text-foreground">
+              or drop your files
             </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              PDF and VTT · max {formatBytes(INGEST_LIMITS.maxPdfBytes)}
+            </p>
+
+            {file ? (
+              <div className="mt-4 flex max-w-full items-center gap-2 rounded-full bg-background px-3 py-1.5 text-xs ring-1 ring-border">
+                <span className="truncate">{file.name}</span>
+                <button
+                  type="button"
+                  className="rounded-full p-0.5 text-muted-foreground hover:text-foreground"
+                  aria-label="Remove file"
+                  onClick={() => {
+                    setFile(null);
+                    setEntry("auto");
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            ) : null}
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="add-source-title">Title</Label>
-            <Input
-              id="add-source-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Optional for URL / YouTube"
-            />
+          <div className="grid grid-cols-3 gap-2">
+            <Button
+              type="button"
+              variant={entry === "file" ? "default" : "outline"}
+              className="h-auto flex-col gap-1 py-3"
+              disabled={isAdding}
+              onClick={() => {
+                setEntry("file");
+                fileInputRef.current?.click();
+              }}
+            >
+              <FileUp className="size-4" />
+              <span className="text-xs">Upload</span>
+            </Button>
+            <Button
+              type="button"
+              variant={entry === "link" ? "default" : "outline"}
+              className="h-auto flex-col gap-1 py-3"
+              disabled={isAdding}
+              onClick={() => {
+                setFile(null);
+                setEntry("link");
+              }}
+            >
+              <Globe className="size-4" />
+              <span className="text-xs">Website</span>
+            </Button>
+            <Button
+              type="button"
+              variant={entry === "text" ? "default" : "outline"}
+              className="h-auto flex-col gap-1 py-3"
+              disabled={isAdding}
+              onClick={() => {
+                setFile(null);
+                setEntry("text");
+              }}
+            >
+              <ClipboardPaste className="size-4" />
+              <span className="text-xs">Text</span>
+            </Button>
           </div>
 
-          {mode === "text" ? (
-            <div className="space-y-2">
-              <Label htmlFor="add-source-content">Content</Label>
-              <Textarea
-                id="add-source-content"
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                rows={8}
-                required
-                maxLength={INGEST_LIMITS.maxTextChars}
-              />
-            </div>
-          ) : null}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf,.pdf,.vtt,text/vtt"
+            className="hidden"
+            onChange={(e) => acceptFile(e.target.files?.[0] ?? null)}
+          />
 
-          {mode === "pdf" ? (
-            <div className="space-y-2">
-              <Label htmlFor="add-source-pdf">PDF (max {formatBytes(INGEST_LIMITS.maxPdfBytes)})</Label>
-              <Input
-                id="add-source-pdf"
-                type="file"
-                accept="application/pdf,.pdf"
-                onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)}
-              />
-              {pdfFile ? (
-                <p className="text-xs text-muted-foreground">{pdfFile.name}</p>
-              ) : null}
-            </div>
-          ) : null}
-
-          {mode === "url" ? (
-            <div className="space-y-2">
-              <Label htmlFor="add-source-url">URL</Label>
-              <Input
-                id="add-source-url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://"
-                required
-              />
-            </div>
-          ) : null}
-
-          {mode === "vtt" ? (
-            <div className="space-y-2">
-              <Label htmlFor="add-source-vtt">VTT (max {formatBytes(INGEST_LIMITS.maxVttBytes)})</Label>
-              <Input
-                id="add-source-vtt"
-                type="file"
-                accept=".vtt,text/vtt,text/plain"
-                onChange={(e) => setVttFile(e.target.files?.[0] ?? null)}
-              />
-            </div>
-          ) : null}
-
-          {mode === "youtube" ? (
-            <div className="space-y-2">
-              <Label htmlFor="add-source-yt">YouTube URL</Label>
-              <Input
-                id="add-source-yt"
-                value={youtubeUrl}
-                onChange={(e) => setYoutubeUrl(e.target.value)}
-                placeholder="https://www.youtube.com/watch?v=…"
-                required
-              />
-            </div>
-          ) : null}
-
-          {error ? (
+          {localError || error ? (
             <p className="text-sm text-destructive" role="alert">
-              {error}
+              {localError || error}
             </p>
           ) : null}
 
-          <Button type="submit" disabled={isAdding}>
-            {isAdding ? "Adding…" : "Add source"}
+          <Button
+            type="submit"
+            className="mt-auto"
+            disabled={isAdding || (!paste.trim() && !file)}
+          >
+            {isAdding ? (
+              <>
+                <LoaderCircle className="animate-spin" />
+                Adding…
+              </>
+            ) : (
+              "Add source"
+            )}
           </Button>
         </form>
       </SheetContent>
