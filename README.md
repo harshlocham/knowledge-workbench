@@ -13,13 +13,12 @@ NotebookLM-style research assistant: create notebooks, add sources (PDF, text, w
 - **Qdrant** (embeddings)
 - **OpenAI** (embeddings + chat)
 
-## Quick start
+## Quick start (local Bun)
 
 ### Prerequisites
 
 - [Bun](https://bun.sh)
-- PostgreSQL (`DATABASE_URL`)
-- Docker (for local Qdrant)
+- Docker (Postgres + Qdrant)
 - Clerk app keys
 - OpenAI API key
 
@@ -28,20 +27,52 @@ NotebookLM-style research assistant: create notebooks, add sources (PDF, text, w
 ```bash
 bun install
 cp .env.example .env.local
-# Fill in Clerk, DATABASE_URL, OPENAI_API_KEY (Qdrant defaults work with compose)
-docker compose up -d
+# Fill in Clerk + OPENAI_API_KEY (DATABASE_URL / QDRANT_URL defaults match compose)
+bun run docker:deps
 bun run db:migrate
 bun run dev
 ```
 
 App runs at [http://localhost:3000](http://localhost:3000).
 
+## Docker (full stack)
+
+Runs the app container with Postgres, Qdrant, migrations on boot, and a persistent `uploads` volume.
+
+```bash
+cp .env.example .env
+# Fill VITE_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY, OPENAI_API_KEY
+bun run docker:up
+# or: docker compose --profile app up --build -d
+```
+
+App: [http://localhost:3000](http://localhost:3000)
+
+```bash
+bun run docker:logs   # follow app logs
+bun run docker:down   # stop stack
+```
+
+Compose wires `DATABASE_URL` / `QDRANT_URL` to the internal services. Set `S3_*` in `.env` if you want object storage instead of the uploads volume.
+
+Build a standalone image:
+
+```bash
+docker build \
+  --build-arg VITE_CLERK_PUBLISHABLE_KEY="$VITE_CLERK_PUBLISHABLE_KEY" \
+  -t knowledge-workbench .
+```
+
 ### Scripts
 
 | Command | Purpose |
 |---------|---------|
 | `bun run dev` | Dev server (port 3000) |
-| `bun run build` | Production build |
+| `bun run build` | Production build (Nitro Bun → `.output`) |
+| `bun run start` | Run production server |
+| `bun run docker:deps` | Start Postgres + Qdrant only |
+| `bun run docker:up` | Build/run full stack (app profile) |
+| `bun run docker:down` | Stop full stack |
 | `bun run check` | Biome lint + format |
 | `bun run db:generate` | Generate Drizzle migrations |
 | `bun run db:migrate` | Apply migrations |
@@ -79,7 +110,7 @@ src/
 
 ## Environment
 
-Copy [`.env.example`](./.env.example) to `.env.local`. Required:
+Copy [`.env.example`](./.env.example) to `.env.local` (Bun) or `.env` (Docker Compose). Required:
 
 - `VITE_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY`
 - `DATABASE_URL`
