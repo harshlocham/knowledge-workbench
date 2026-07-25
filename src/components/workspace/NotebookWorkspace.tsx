@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { Menu, PanelRight } from "lucide-react";
@@ -54,6 +54,10 @@ import {
   friendlyIngestError,
   INGEST_LIMITS,
 } from "#/lib/ingest/limits.ts";
+import {
+  deriveNotebookTitleFromSources,
+  isUntitledNotebookTitle,
+} from "#/lib/notebook-title.ts";
 
 function isPendingStatus(status: SourceDTO["status"]) {
   return status === "uploading" || status === "indexing";
@@ -97,6 +101,8 @@ export function NotebookWorkspace({
   );
   const [mobileSourcesOpen, setMobileSourcesOpen] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const autoTitleEnabledRef = useRef(isUntitledNotebookTitle(notebook.title));
+  const titleSyncInFlightRef = useRef(false);
 
   const [roadmap, setRoadmap] = useState<LearningRoadmap | null>(null);
   const [roadmapFocus, setRoadmapFocus] = useState("");
@@ -120,6 +126,9 @@ export function NotebookWorkspace({
 
   useEffect(() => {
     setNotebookState(notebook);
+    if (isUntitledNotebookTitle(notebook.title)) {
+      autoTitleEnabledRef.current = true;
+    }
   }, [notebook]);
 
   useEffect(() => {
@@ -135,6 +144,33 @@ export function NotebookWorkspace({
       setAddSourcesOpen(true);
     }
   }, [sources.length]);
+
+  // While the notebook is still auto-managed (created as Untitled and not
+  // manually renamed), keep the title in sync with source titles — including
+  // upgrades when URL/YouTube indexing fills in a better name.
+  useEffect(() => {
+    if (!autoTitleEnabledRef.current || titleSyncInFlightRef.current) {
+      return;
+    }
+
+    const nextTitle = deriveNotebookTitleFromSources(sources);
+    if (!nextTitle || nextTitle === notebookState.title) {
+      return;
+    }
+
+    titleSyncInFlightRef.current = true;
+    void updateNotebookFn({
+      data: { id: notebookState.id, title: nextTitle },
+    })
+      .then((updated) => {
+        setNotebookState(updated);
+        return router.invalidate();
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        titleSyncInFlightRef.current = false;
+      });
+  }, [sources, notebookState.id, notebookState.title, updateNotebookFn, router]);
 
   const hasPendingSources = useMemo(
     () => sources.some((source) => isPendingStatus(source.status)),
@@ -454,6 +490,7 @@ export function NotebookWorkspace({
   }
 
   async function handleRename(title: string) {
+    autoTitleEnabledRef.current = false;
     const updated = await updateNotebookFn({
       data: { id: notebookState.id, title },
     });
