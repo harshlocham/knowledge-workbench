@@ -81,7 +81,10 @@ export function ViewerTabs({
         </TabsList>
       </div>
 
-      <TabsContent value="source" className="mt-0 min-h-0 flex-1 overflow-hidden">
+      <TabsContent
+        value="source"
+        className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
+      >
         <SourceTab
           source={viewer}
           loading={viewerLoading}
@@ -91,10 +94,16 @@ export function ViewerTabs({
           onClose={onCloseViewer}
         />
       </TabsContent>
-      <TabsContent value="summary" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+      <TabsContent
+        value="summary"
+        className="mt-0 min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
+      >
         <SummaryTab notebook={notebook} sources={sources} messages={messages} />
       </TabsContent>
-      <TabsContent value="learn" className="mt-0 min-h-0 flex-1 overflow-hidden">
+      <TabsContent
+        value="learn"
+        className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
+      >
         <LearnTab
           youtubeReadyCount={youtubeReadyCount}
           focus={roadmapFocus}
@@ -106,7 +115,10 @@ export function ViewerTabs({
           onOpenClip={onOpenClip}
         />
       </TabsContent>
-      <TabsContent value="metadata" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+      <TabsContent
+        value="metadata"
+        className="mt-0 min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
+      >
         <MetadataTab source={viewer} sourceMeta={selectedSource} />
       </TabsContent>
     </Tabs>

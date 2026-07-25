@@ -262,11 +262,20 @@ export function NotebookWorkspace({
     [sources, viewer?.id],
   );
 
+  function revealKnowledgeTools() {
+    layout.setRightCollapsed(false);
+    setToolsTab("source");
+    // Desktop already has the docked right panel — only open the mobile sheet
+    // below the `lg` breakpoint so we don't stack two source viewers.
+    const isMobileViewport =
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 1023px)").matches;
+    setMobileToolsOpen(isMobileViewport);
+  }
+
   async function loadViewer(options: { sourceId: string; chunkId?: string }) {
     setViewerLoading(true);
-    layout.setRightCollapsed(false);
-    setMobileToolsOpen(true);
-    setToolsTab("source");
+    revealKnowledgeTools();
     try {
       const data = await getSourceViewerFn({
         data: {

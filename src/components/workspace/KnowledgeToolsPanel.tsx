@@ -1,4 +1,3 @@
-import { PanelHeader } from "#/components/layout/PanelHeader.tsx";
 import {
   ViewerTabs,
   type ToolsTab,
@@ -42,10 +41,6 @@ export function KnowledgeToolsPanel({
 }) {
   return (
     <div className={cn("flex h-full min-h-0 flex-col bg-card", className)}>
-      <PanelHeader
-        title="Knowledge Tools"
-        description="Source viewer, summary, and learning path"
-      />
       <div className="min-h-0 flex-1">
         <ViewerTabs {...props} />
       </div>
