@@ -13,10 +13,12 @@ import { notebooks } from "#/db/schema/notebooks.ts";
 import { sources } from "#/db/schema/sources.ts";
 import { requireOwnedNotebook } from "#/features/sources/notebook-access.server.ts";
 import { requireUserId } from "#/lib/auth.server.ts";
-import { searchNotebookChunks } from "#/lib/qdrant/points.ts";
-import { embedTexts } from "#/lib/rag/embed.ts";
+import { retrieveHybridNotebookChunks } from "#/lib/rag/hybrid-retrieve.server.ts";
 import { generateGroundedAnswer } from "#/lib/rag/llm.ts";
 import { formatVttTimestamp } from "#/lib/rag/parse-vtt.server.ts";
+
+const RETRIEVAL_FINAL_LIMIT = 8;
+const RETRIEVAL_MIN_GAP_SECONDS = 90;
 
 export type ChatMessageDTO = {
   id: string;
@@ -104,12 +106,12 @@ export const askNotebook = createServerFn({ method: "POST" })
       };
     }
 
-    const [queryVector] = await embedTexts([data.question]);
-    const hits = await searchNotebookChunks({
+    const { hits } = await retrieveHybridNotebookChunks({
       notebookId: data.notebookId,
       ownerId: userId,
-      vector: queryVector!,
-      limit: 6,
+      question: data.question,
+      finalLimit: RETRIEVAL_FINAL_LIMIT,
+      minGapSeconds: RETRIEVAL_MIN_GAP_SECONDS,
     });
 
     const sourceTitleById = new Map(

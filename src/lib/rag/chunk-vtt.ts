@@ -9,9 +9,25 @@ type CueSpan = {
   endOffset: number;
 };
 
+/** Compact clock for embed/prompt labels (drop millis). */
+export function formatChunkClock(totalSeconds: number): string {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+  if (hours > 0) {
+    return `${hours}:${mm}:${ss}`;
+  }
+  return `${minutes}:${ss}`;
+}
+
 /**
  * Join cues into plain text, run the shared chunker, then map each chunk
  * back onto overlapping cue timings (tStart / tEnd / cueIndexes).
+ * Timed chunks get a `[start–end]` prefix so embeddings + RAG see when
+ * the clip happens (plainText stays unprefixed for source metadata).
  * Optional videoId is attached for YouTube deep-links.
  */
 export function chunkVttCues(
@@ -57,15 +73,22 @@ export function chunkVttCues(
 
     const timed = overlapping.length > 0 ? overlapping : spans.slice(0, 1);
     const cueIndexes = timed.map((span) => span.cueIndex);
+    const tStart = timed[0]?.tStart;
+    const tEnd = timed.at(-1)?.tEnd;
+
+    const timePrefix =
+      typeof tStart === "number" && typeof tEnd === "number"
+        ? `[${formatChunkClock(tStart)}–${formatChunkClock(tEnd)}] `
+        : "";
 
     return {
-      content: chunk.content,
+      content: `${timePrefix}${chunk.content}`,
       chunkIndex: chunk.chunkIndex,
       locator: {
         startOffset: chunk.locator.startOffset,
         endOffset: chunk.locator.endOffset,
-        tStart: timed[0]?.tStart,
-        tEnd: timed.at(-1)?.tEnd,
+        tStart,
+        tEnd,
         cueIndex: cueIndexes[0],
         cueIndexes,
         videoId: options?.videoId,

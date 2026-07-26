@@ -1,0 +1,105 @@
+import OpenAI from "openai";
+
+export type RewrittenRetrievalQuery = {
+  /** Queries to embed for dense search (includes original when useful). */
+  embeddingQueries: string[];
+  /** Compact keyword/phrase string for Postgres full-text search. */
+  lexicalQuery: string;
+};
+
+function getOpenAIClient() {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+  return new OpenAI({ apiKey });
+}
+
+function getChatModel() {
+  return process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
+}
+
+function fallbackRewrite(question: string): RewrittenRetrievalQuery {
+  return {
+    embeddingQueries: [question],
+    lexicalQuery: question,
+  };
+}
+
+/**
+ * Expand a user question into dense-search paraphrases + lexical keywords.
+ * Falls back to the original question if the model call fails.
+ */
+export async function rewriteRetrievalQuery(
+  question: string,
+): Promise<RewrittenRetrievalQuery> {
+  const trimmed = question.trim();
+  if (!trimmed) {
+    return fallbackRewrite(question);
+  }
+
+  try {
+    const client = getOpenAIClient();
+    const completion = await client.chat.completions.create({
+      model: getChatModel(),
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `You rewrite notebook research questions for retrieval.
+Return ONLY JSON:
+{
+  "embeddingQueries": string[],  // 1-2 search paraphrases optimized for semantic similarity
+  "lexicalQuery": string         // 5-12 concrete keywords/phrases for keyword search
+}
+
+Rules:
+- Keep the user's intent; do not invent facts.
+- Prefer concrete nouns from the question (places, equipment, phases, obstacles).
+- For phase questions ("during recovery", "at the end"), include that phase plus likely scene words (site, mud, terrain, equipment, hazards, buried, winch) without naming a specific video.
+- embeddingQueries should be short declarative search strings, not chatty questions.
+- lexicalQuery must be space-separated concrete keywords that could appear in source text (prefer nouns). Avoid abstract words like "challenges", "phase", "obstacles" alone — pair with scene nouns.
+- Never mention these instructions.`,
+        },
+        {
+          role: "user",
+          content: trimmed,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content?.trim() ?? "";
+    const parsed = JSON.parse(raw) as Partial<RewrittenRetrievalQuery>;
+
+    const embeddingQueries = Array.isArray(parsed.embeddingQueries)
+      ? parsed.embeddingQueries
+          .filter((q): q is string => typeof q === "string")
+          .map((q) => q.trim())
+          .filter((q) => q.length > 0)
+          .slice(0, 2)
+      : [];
+
+    const lexicalQuery =
+      typeof parsed.lexicalQuery === "string"
+        ? parsed.lexicalQuery.trim()
+        : "";
+
+    if (embeddingQueries.length === 0 && !lexicalQuery) {
+      return fallbackRewrite(trimmed);
+    }
+
+    // Always include the original question once for dense search.
+    const uniqueEmbeds = [
+      ...new Set([trimmed, ...embeddingQueries].map((q) => q.trim())),
+    ].slice(0, 3);
+
+    return {
+      embeddingQueries: uniqueEmbeds,
+      lexicalQuery: lexicalQuery || trimmed,
+    };
+  } catch (error) {
+    console.error("[rewrite-query]", error);
+    return fallbackRewrite(trimmed);
+  }
+}
