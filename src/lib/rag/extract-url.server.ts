@@ -139,19 +139,32 @@ export async function extractUrlArticle(
   const reader = new Readability(document as unknown as Document);
   const article = reader.parse();
 
-  if (!article?.textContent?.trim() && !article?.content?.trim()) {
-    throw new Error("Could not extract readable article content from URL");
+  let text = "";
+  let headings: string[] = [];
+  let title =
+    article?.title?.trim() || document.title?.trim() || "";
+  let excerpt = article?.excerpt?.trim() || null;
+  let siteName = article?.siteName?.trim() || null;
+
+  if (article?.content?.trim()) {
+    ({ text, headings } = htmlToPlainText(article.content));
+  } else if (article?.textContent?.trim()) {
+    text = article.textContent.trim();
   }
 
-  const { text, headings } = article.content
-    ? htmlToPlainText(article.content)
-    : {
-        text: article.textContent?.trim() ?? "",
-        headings: [] as string[],
-      };
+  // Tutorial / docs sites (e.g. GeeksforGeeks) often fail Readability.
+  // Fall back to common main-content selectors, then a cleaned body.
+  if (!text.trim()) {
+    const fallback = extractFallbackArticle(document);
+    if (fallback) {
+      text = fallback.text;
+      headings = fallback.headings;
+      title = title || fallback.title;
+    }
+  }
 
   if (!text.trim()) {
-    throw new Error("Extracted article content was empty");
+    throw new Error("Could not extract readable article content from URL");
   }
 
   const canonical =
@@ -167,12 +180,73 @@ export async function extractUrlArticle(
   }
 
   return {
-    title: article.title?.trim() || document.title?.trim() || canonicalUrl,
+    title: title || canonicalUrl,
     canonicalUrl,
     content: text,
-    excerpt: article.excerpt?.trim() || null,
-    siteName: article.siteName?.trim() || null,
+    excerpt,
+    siteName,
     headings,
+  };
+}
+
+const FALLBACK_CONTENT_SELECTORS = [
+  "article",
+  "[role='main']",
+  "main",
+  ".article--viewer_content",
+  ".article--viewer",
+  ".entry-content",
+  ".post-content",
+  ".article_content",
+  "#content",
+  ".content",
+];
+
+const MIN_FALLBACK_CHARS = 280;
+
+function extractFallbackArticle(document: Document): {
+  text: string;
+  headings: string[];
+  title: string;
+} | null {
+  for (const selector of FALLBACK_CONTENT_SELECTORS) {
+    const el = document.querySelector(selector);
+    if (!el) continue;
+    const { text, headings } = htmlToPlainText(el.innerHTML);
+    if (text.trim().length >= MIN_FALLBACK_CHARS) {
+      return {
+        text: text.trim(),
+        headings,
+        title: document.title?.trim() || "",
+      };
+    }
+  }
+
+  // Last resort: strip obvious chrome, then take body text.
+  const clone = document.body?.cloneNode(true) as Element | null;
+  if (!clone) return null;
+  for (const sel of [
+    "script",
+    "style",
+    "noscript",
+    "nav",
+    "header",
+    "footer",
+    "aside",
+    "iframe",
+  ]) {
+    for (const node of Array.from(clone.querySelectorAll(sel))) {
+      node.remove();
+    }
+  }
+  const { text, headings } = htmlToPlainText(clone.innerHTML);
+  if (text.trim().length < MIN_FALLBACK_CHARS) {
+    return null;
+  }
+  return {
+    text: text.trim(),
+    headings,
+    title: document.title?.trim() || "",
   };
 }
 
