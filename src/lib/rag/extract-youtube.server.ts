@@ -1,23 +1,6 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { fetchTranscript } from "youtube-transcript";
 
 import type { VttCue } from "#/lib/rag/parse-vtt.server.ts";
-import {
-  parseTranscriptXml,
-  transcriptItemsToCues,
-} from "#/lib/rag/youtube-transcript-shared.ts";
-import {
-  extractYoutubeVideoId,
-  youtubeWatchUrl,
-} from "#/lib/rag/youtube-url.ts";
-
-export { extractYoutubeVideoId, youtubeWatchUrl };
-
-const execFileAsync = promisify(execFile);
 
 export type ExtractedYoutubeTranscript = {
   videoId: string;
@@ -26,6 +9,59 @@ export type ExtractedYoutubeTranscript = {
   cues: VttCue[];
   language?: string;
 };
+
+const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{11}$/;
+
+/** Parse a YouTube URL or bare video id into an 11-character id. */
+export function extractYoutubeVideoId(input: string): string {
+  const trimmed = input.trim();
+  if (VIDEO_ID_RE.test(trimmed)) {
+    return trimmed;
+  }
+
+  const withProtocol = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+
+  let url: URL;
+  try {
+    url = new URL(withProtocol);
+  } catch {
+    throw new Error("Enter a valid YouTube URL or video id");
+  }
+
+  const host = url.hostname.replace(/^www\./, "");
+
+  if (host === "youtu.be") {
+    const id = url.pathname.split("/").filter(Boolean)[0];
+    if (id && VIDEO_ID_RE.test(id)) {
+      return id;
+    }
+  }
+
+  if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+    const v = url.searchParams.get("v");
+    if (v && VIDEO_ID_RE.test(v)) {
+      return v;
+    }
+
+    const parts = url.pathname.split("/").filter(Boolean);
+    // /embed/ID, /shorts/ID, /live/ID, /v/ID
+    if (
+      parts.length >= 2 &&
+      ["embed", "shorts", "live", "v"].includes(parts[0]!) &&
+      VIDEO_ID_RE.test(parts[1]!)
+    ) {
+      return parts[1]!;
+    }
+  }
+
+  throw new Error("Could not parse a YouTube video id from that URL");
+}
+
+export function youtubeWatchUrl(videoId: string) {
+  return `https://www.youtube.com/watch?v=${videoId}`;
+}
 
 async function fetchYoutubeTitle(videoId: string): Promise<string | null> {
   try {
@@ -45,9 +81,6 @@ async function fetchYoutubeTitle(videoId: string): Promise<string | null> {
 
 const TRANSCRIPT_FETCH_ATTEMPTS = 3;
 
-const IP_BLOCK_HINT =
-  "YouTube blocked caption fetch from this server IP. Retry adding the source, or upload a .vtt file.";
-
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -58,45 +91,23 @@ function transcriptFetchErrorMessage(error: unknown): string {
     : "Failed to fetch YouTube transcript";
 }
 
+/** Rate limits / captchas are often misreported as "disabled" by scrapers. */
 function isTransientTranscriptError(message: string) {
-  return /too many|captcha|receiving too many requests|blocked|ip.?block/i.test(
-    message,
-  );
-}
-
-function looksLikeMissingCaptions(message: string) {
-  return /disabled|not available|unavailable|no transcripts are available/i.test(
-    message,
-  );
+  return /too many|captcha|receiving too many requests/i.test(message);
 }
 
 function mapTranscriptFetchError(message: string): Error {
-  if (isTransientTranscriptError(message) || looksLikeMissingCaptions(message)) {
+  if (isTransientTranscriptError(message)) {
     return new Error(
-      `No captions available for this video (disabled, private, missing, or blocked). ${IP_BLOCK_HINT}`,
+      "YouTube rate-limited caption fetch. Wait a moment and re-index.",
+    );
+  }
+  if (/disabled|not available|unavailable/i.test(message)) {
+    return new Error(
+      "No captions available for this video (disabled, private, or missing transcript)",
     );
   }
   return new Error(message);
-}
-
-function youtubeFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
-  const proxy =
-    process.env.YOUTUBE_PROXY_URL?.trim() ||
-    process.env.HTTPS_PROXY?.trim() ||
-    process.env.HTTP_PROXY?.trim() ||
-    undefined;
-
-  if (!proxy) {
-    return fetch(input, init);
-  }
-
-  return fetch(input, {
-    ...init,
-    proxy,
-  } as RequestInit & { proxy: string });
 }
 
 async function fetchTranscriptWithRetry(videoId: string) {
@@ -104,123 +115,24 @@ async function fetchTranscriptWithRetry(videoId: string) {
 
   for (let attempt = 1; attempt <= TRANSCRIPT_FETCH_ATTEMPTS; attempt++) {
     try {
-      return await fetchTranscript(videoId, { fetch: youtubeFetch });
+      return await fetchTranscript(videoId);
     } catch (error) {
       lastError = error;
       const message = transcriptFetchErrorMessage(error);
       const retryable =
         isTransientTranscriptError(message) ||
-        looksLikeMissingCaptions(message);
+        /disabled|not available|unavailable/i.test(message);
 
       if (!retryable || attempt === TRANSCRIPT_FETCH_ATTEMPTS) {
         throw mapTranscriptFetchError(message);
       }
 
+      // YouTube often flakes on the first scrape; back off before retrying.
       await sleep(400 * attempt);
     }
   }
 
   throw mapTranscriptFetchError(transcriptFetchErrorMessage(lastError));
-}
-
-function parseVttClock(value: string): number {
-  const cleaned = value.trim().replace(",", ".");
-  const parts = cleaned.split(":");
-  if (parts.length === 3) {
-    return Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2]);
-  }
-  return Number(parts[0]) * 60 + Number(parts[1]);
-}
-
-function cuesFromVtt(vtt: string): VttCue[] {
-  const lines = vtt.replace(/\r/g, "").split("\n");
-  const cues: VttCue[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i]!.trim();
-    if (line === "WEBVTT" || line === "" || line.startsWith("NOTE")) {
-      i += 1;
-      continue;
-    }
-    let timingLine = line;
-    if (!line.includes("-->") && i + 1 < lines.length) {
-      timingLine = lines[i + 1]!.trim();
-      i += 1;
-    }
-    if (!timingLine.includes("-->")) {
-      i += 1;
-      continue;
-    }
-    const [startRaw, endRaw] = timingLine.split("-->").map((s) => s.trim());
-    const tStart = parseVttClock(startRaw!.split(" ")[0]!);
-    const tEnd = parseVttClock(endRaw!.split(" ")[0]!);
-    i += 1;
-    const textLines: string[] = [];
-    while (i < lines.length && lines[i]!.trim() !== "") {
-      textLines.push(lines[i]!.trim().replace(/<[^>]+>/g, ""));
-      i += 1;
-    }
-    const text = textLines.join(" ").replace(/\s+/g, " ").trim();
-    if (text) {
-      cues.push({ cueIndex: cues.length, tStart, tEnd, text });
-    }
-    i += 1;
-  }
-  return cues;
-}
-
-/** yt-dlp often succeeds on hosts where timedtext scrapers are blocked. */
-async function fetchTranscriptViaYtDlp(
-  videoId: string,
-): Promise<{ cues: VttCue[]; language?: string } | null> {
-  const bin = process.env.YT_DLP_PATH?.trim() || "yt-dlp";
-  const dir = await mkdtemp(join(tmpdir(), "kb-yt-"));
-
-  try {
-    await execFileAsync(
-      bin,
-      [
-        "--write-auto-sub",
-        "--write-sub",
-        "--sub-langs",
-        "en.*,en",
-        "--skip-download",
-        "--convert-subs",
-        "vtt",
-        "--extractor-args",
-        "youtube:player_client=android",
-        "-o",
-        join(dir, "sub"),
-        youtubeWatchUrl(videoId),
-      ],
-      { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
-    );
-
-    const files = await readdir(dir);
-    const vttName = files.find((name) => name.endsWith(".vtt"));
-    if (!vttName) {
-      return null;
-    }
-
-    const vtt = await readFile(join(dir, vttName), "utf8");
-    const cues = cuesFromVtt(vtt);
-    if (cues.length === 0) {
-      // Some tracks are XML-like despite .vtt extension
-      const xmlCues = transcriptItemsToCues(parseTranscriptXml(vtt, "en"));
-      if (xmlCues.length === 0) return null;
-      return { cues: xmlCues, language: "en" };
-    }
-
-    const langMatch = vttName.match(/\.([a-z]{2}(-[A-Za-z]+)?)\.vtt$/i);
-    return {
-      cues,
-      language: langMatch?.[1] || "en",
-    };
-  } catch {
-    return null;
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
 }
 
 /** Fetch captions and title for a YouTube video. */
@@ -230,35 +142,44 @@ export async function extractYoutubeTranscript(
   const videoId = extractYoutubeVideoId(rawUrlOrId);
   const watchUrl = youtubeWatchUrl(videoId);
 
-  let cues: VttCue[] = [];
-  let language: string | undefined;
+  const items = await fetchTranscriptWithRetry(videoId);
 
-  try {
-    const items = await fetchTranscriptWithRetry(videoId);
-    cues = transcriptItemsToCues(items);
-    language = items[0]?.lang;
-  } catch (primaryError) {
-    const viaYtDlp = await fetchTranscriptViaYtDlp(videoId);
-    if (!viaYtDlp) {
-      throw primaryError instanceof Error
-        ? primaryError
-        : new Error(String(primaryError));
-    }
-    cues = viaYtDlp.cues;
-    language = viaYtDlp.language;
+  if (!items.length) {
+    throw new Error("YouTube returned an empty transcript");
   }
+
+  // youtube-transcript srv3 tracks use milliseconds; classic XML uses seconds.
+  const maxOffset = Math.max(
+    ...items.map((item) => Number(item.offset) || 0),
+    0,
+  );
+  const offsetUnit = maxOffset >= 100_000 ? "ms" : "s";
+
+  const cues: VttCue[] = items.map((item, cueIndex) => {
+    const rawStart = Math.max(0, Number(item.offset) || 0);
+    const rawDuration = Math.max(0, Number(item.duration) || 0);
+    const tStart = offsetUnit === "ms" ? rawStart / 1000 : rawStart;
+    const duration = offsetUnit === "ms" ? rawDuration / 1000 : rawDuration;
+    return {
+      cueIndex,
+      tStart,
+      tEnd: tStart + (duration > 0 ? duration : 2),
+      text: item.text.replace(/\s+/g, " ").trim(),
+    };
+  }).filter((cue) => cue.text.length > 0);
 
   if (cues.length === 0) {
-    throw new Error(`YouTube returned an empty transcript. ${IP_BLOCK_HINT}`);
+    throw new Error("YouTube transcript contained no usable text");
   }
 
-  const title = (await fetchYoutubeTitle(videoId)) ?? `YouTube ${videoId}`;
+  const title =
+    (await fetchYoutubeTitle(videoId)) ?? `YouTube ${videoId}`;
 
   return {
     videoId,
     watchUrl,
     title,
     cues,
-    language,
+    language: items[0]?.lang,
   };
 }

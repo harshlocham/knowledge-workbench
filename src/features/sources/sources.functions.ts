@@ -474,24 +474,6 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
       notebookId: z.string().uuid(),
       url: z.string().trim().min(1).max(INGEST_LIMITS.maxUrlLength),
       title: z.string().trim().max(INGEST_LIMITS.maxTitleLength).optional(),
-      /** Captions fetched in the browser (required for reliable VPS indexing). */
-      transcript: z
-        .object({
-          title: z.string().trim().max(INGEST_LIMITS.maxTitleLength).optional(),
-          language: z.string().trim().max(32).optional(),
-          cues: z
-            .array(
-              z.object({
-                cueIndex: z.number().int().nonnegative(),
-                tStart: z.number().nonnegative(),
-                tEnd: z.number().nonnegative(),
-                text: z.string().trim().min(1).max(8_000),
-              }),
-            )
-            .min(1)
-            .max(20_000),
-        })
-        .optional(),
     }),
   )
   .handler(async ({ data }) => {
@@ -507,10 +489,7 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
     }
 
     const watchUrl = youtubeWatchUrl(videoId);
-    const title =
-      data.title?.trim() ||
-      data.transcript?.title?.trim() ||
-      `YouTube ${videoId}`;
+    const title = data.title?.trim() || `YouTube ${videoId}`;
 
     const [row] = await db
       .insert(sources)
@@ -543,13 +522,6 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
         urlOrId: videoId,
         updateTitleFromVideo: !data.title?.trim(),
         existingMetadata: { videoId },
-        prefetched: data.transcript
-          ? {
-              title: data.transcript.title,
-              language: data.transcript.language,
-              cues: data.transcript.cues,
-            }
-          : undefined,
       });
     });
 

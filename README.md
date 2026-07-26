@@ -49,7 +49,7 @@ docker compose -f docker-compose.prod.yml up --build -d
 
 Migrations run automatically on app container start. Caddy issues a Let’s Encrypt cert for `DOMAIN`.
 
-**YouTube on a VPS:** paste the URL as usual. The server tries `youtube-transcript`, then **yt-dlp** (bundled in the Docker image). Optional `YOUTUBE_PROXY_URL` is a last-resort residential proxy.
+**YouTube on a VPS:** paste the YouTube URL as usual (same flow as local).
 
 ```bash
 docker compose -f docker-compose.prod.yml logs -f
@@ -91,7 +91,6 @@ Full diagrams: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 | `DATABASE_URL` | External Postgres |
 | `QDRANT_URL` / `QDRANT_API_KEY` | Qdrant Cloud HTTPS URL (no `:6333`) + API key |
 | `OPENAI_API_KEY` | Required |
-| `YOUTUBE_PROXY_URL` | Optional residential proxy for YouTube captions on VPS |
 | `S3_*` | Recommended on VPS instead of local disk |
 
 ## License
