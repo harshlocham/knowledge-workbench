@@ -11,6 +11,11 @@ import {
   setSourceIndexProgress,
   setSourceStatus,
 } from "#/lib/rag/index-source.server.ts";
+import type { YoutubeCueInput } from "#/lib/rag/youtube-transcript-shared.ts";
+import {
+  extractYoutubeVideoId,
+  youtubeWatchUrl,
+} from "#/lib/rag/youtube-url.ts";
 
 export type YoutubeSourceMetadata = {
   content: string;
@@ -28,9 +33,25 @@ export type YoutubeSourceMetadata = {
   }>;
 };
 
+function normalizeCues(cues: YoutubeCueInput[]) {
+  return cues
+    .map((cue, cueIndex) => ({
+      cueIndex,
+      tStart: Math.max(0, Number(cue.tStart) || 0),
+      tEnd: Math.max(
+        Math.max(0, Number(cue.tStart) || 0),
+        Number(cue.tEnd) || 0,
+      ),
+      text: String(cue.text ?? "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    }))
+    .filter((cue) => cue.text.length > 0);
+}
+
 /**
- * YouTube-specific steps: fetch captions → timed chunks with videoId.
- * Then reuses the shared persist pipeline.
+ * YouTube index: prefer saved cues on re-index; otherwise fetch via
+ * extractYoutubeTranscript (residential proxy required in production).
  */
 export async function indexYoutubeSource(options: {
   sourceId: string;
@@ -46,29 +67,65 @@ export async function indexYoutubeSource(options: {
   await clearSourceIndex(sourceId);
 
   try {
+    const existingCues = options.existingMetadata?.cues;
+    const hasStoredCues =
+      Array.isArray(existingCues) && existingCues.length > 0;
+
     await setSourceIndexProgress(sourceId, {
       phase: "extracting",
       percent: 15,
-      message: "Fetching captions…",
+      message: hasStoredCues
+        ? "Reusing saved captions…"
+        : "Fetching captions…",
     });
 
-    const extracted = await extractYoutubeTranscript(options.urlOrId);
-    const { plainText, chunks } = chunkVttCues(extracted.cues, {
-      videoId: extracted.videoId,
-      url: extracted.watchUrl,
+    let videoId: string;
+    let watchUrl: string;
+    let title: string;
+    let language: string | undefined;
+    let cues: ReturnType<typeof normalizeCues>;
+
+    if (hasStoredCues) {
+      videoId =
+        typeof options.existingMetadata?.videoId === "string"
+          ? options.existingMetadata.videoId
+          : extractYoutubeVideoId(options.urlOrId);
+      watchUrl =
+        typeof options.existingMetadata?.watchUrl === "string"
+          ? options.existingMetadata.watchUrl
+          : youtubeWatchUrl(videoId);
+      cues = normalizeCues(existingCues as YoutubeCueInput[]);
+      title = `YouTube ${videoId}`;
+      language =
+        typeof options.existingMetadata?.language === "string"
+          ? options.existingMetadata.language
+          : undefined;
+    } else {
+      const extracted = await extractYoutubeTranscript(options.urlOrId);
+      videoId = extracted.videoId;
+      watchUrl = extracted.watchUrl;
+      cues = extracted.cues;
+      title = extracted.title;
+      language = extracted.language;
+    }
+
+    if (cues.length === 0) {
+      throw new Error("YouTube transcript contained no usable text");
+    }
+
+    const { plainText, chunks } = chunkVttCues(cues, {
+      videoId,
+      url: watchUrl,
     });
 
-    const durationSeconds = Math.max(
-      ...extracted.cues.map((cue) => cue.tEnd),
-      0,
-    );
+    const durationSeconds = Math.max(...cues.map((cue) => cue.tEnd), 0);
 
     await db
       .update(sources)
       .set({
-        originalUrl: extracted.watchUrl,
+        originalUrl: watchUrl,
         ...(options.updateTitleFromVideo
-          ? { title: extracted.title.slice(0, 200) }
+          ? { title: title.slice(0, 200) }
           : {}),
         updatedAt: new Date(),
       })
@@ -84,12 +141,12 @@ export async function indexYoutubeSource(options: {
         ...(options.existingMetadata ?? {}),
         content: plainText,
         charCount: plainText.length,
-        cueCount: extracted.cues.length,
+        cueCount: cues.length,
         durationSeconds,
-        videoId: extracted.videoId,
-        watchUrl: extracted.watchUrl,
-        language: extracted.language,
-        cues: extracted.cues,
+        videoId,
+        watchUrl,
+        language,
+        cues,
       } satisfies YoutubeSourceMetadata & Record<string, unknown>,
     });
   } catch (error) {

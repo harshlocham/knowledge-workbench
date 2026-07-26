@@ -21,6 +21,7 @@ import {
 } from "#/lib/ingest/rate-limit.server.ts";
 import { normalizeUrl } from "#/lib/rag/extract-url.server.ts";
 import {
+  assertYoutubeProxyConfiguredForProduction,
   extractYoutubeVideoId,
   youtubeWatchUrl,
 } from "#/lib/rag/extract-youtube.server.ts";
@@ -478,6 +479,7 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const { userId } = await beginCreate(data.notebookId);
+    assertYoutubeProxyConfiguredForProduction();
 
     let videoId: string;
     try {

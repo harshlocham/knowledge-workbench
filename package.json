@@ -18,7 +18,8 @@
     "db:push": "drizzle-kit push",
     "db:pull": "drizzle-kit pull",
     "db:studio": "drizzle-kit studio",
-    "eval:rag": "bun run scripts/eval-rag.ts"
+    "eval:rag": "bun run scripts/eval-rag.ts",
+    "verify:youtube-proxy": "bun run scripts/verify-youtube-proxy.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1095.0",

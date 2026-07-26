@@ -49,7 +49,14 @@ docker compose -f docker-compose.prod.yml up --build -d
 
 Migrations run automatically on app container start. Caddy issues a Let’s Encrypt cert for `DOMAIN`.
 
-**YouTube on a VPS:** paste the YouTube URL as usual (same flow as local).
+**YouTube on a VPS:** YouTube blocks most datacenter IPs. Set a **residential** `YOUTUBE_PROXY_URL` in prod `.env`, then **prove** it inside the app container before adding videos:
+
+```bash
+docker compose -f docker-compose.prod.yml exec app bun run verify:youtube-proxy
+# must print: VPS_OK <cueCount>
+```
+
+Only keep that proxy if you see `VPS_OK`. Datacenter pools often print `VPS_FAIL` (same as bare VPS). Production refuses YouTube indexing without `YOUTUBE_PROXY_URL`. Local `bun dev` can omit it (home IP usually works).
 
 ```bash
 docker compose -f docker-compose.prod.yml logs -f

@@ -40,6 +40,12 @@ export function friendlyIngestError(error: unknown, fallback: string) {
 	) {
 		return message;
 	}
+	if (lower.includes("youtube_proxy") || lower.includes("verify:youtube-proxy")) {
+		return message;
+	}
+	if (lower.includes("youtube") && lower.includes("blocked")) {
+		return message;
+	}
 	if (lower.includes("youtube") && lower.includes("rate-limited")) {
 		return message;
 	}
