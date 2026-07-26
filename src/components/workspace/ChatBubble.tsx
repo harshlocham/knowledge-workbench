@@ -1,261 +1,300 @@
-import { useMemo, useState, type ReactNode } from "react";
 import { Check, Copy, RefreshCw } from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { formatCompactTime } from "#/components/notebook/source-viewer/format.ts";
-import { CitationBadge } from "#/components/workspace/CitationBadge.tsx";
 import { Button } from "#/components/ui/button.tsx";
+import { CitationBadge } from "#/components/workspace/CitationBadge.tsx";
 import type { MessageCitation } from "#/db/schema/messages.ts";
 import type { ChatMessageDTO } from "#/features/chat/chat.functions.ts";
+import { splitFollowUpQuestions } from "#/lib/chat/follow-up-questions.ts";
 import { cn } from "#/lib/utils.ts";
 
 /** Stored YouTube cues may still be ms from before timing normalization. */
 function formatCitationClock(tStart: number): string {
-  const seconds = tStart >= 100_000 ? tStart / 1000 : tStart;
-  return formatCompactTime(seconds);
+	const seconds = tStart >= 100_000 ? tStart / 1000 : tStart;
+	return formatCompactTime(seconds);
 }
 
 function citationKey(messageId: string, citation: MessageCitation) {
-  return `${messageId}:${citation.chunkId}:${citation.citationNumber ?? ""}`;
+	return `${messageId}:${citation.chunkId}:${citation.citationNumber ?? ""}`;
 }
 
 function injectCitationBadges(
-  node: ReactNode,
-  citations: MessageCitation[],
-  messageId: string,
-  activeCitationKey: string | null,
-  onCitationClick: (citation: MessageCitation, messageId: string) => void,
+	node: ReactNode,
+	citations: MessageCitation[],
+	messageId: string,
+	activeCitationKey: string | null,
+	onCitationClick: (citation: MessageCitation, messageId: string) => void,
 ): ReactNode {
-  if (typeof node === "string") {
-    const parts = node.split(/(\[\d+\])/g);
-    return parts.map((part, index) => {
-      const match = part.match(/^\[(\d+)\]$/);
-      if (!match) {
-        return <span key={`t-${index}`}>{part}</span>;
-      }
-      const citationNumber = Number(match[1]);
-      const citation =
-        citations.find((item) => item.citationNumber === citationNumber) ??
-        citations[citationNumber - 1];
-      if (!citation) {
-        return <span key={`c-${index}`}>{part}</span>;
-      }
-      const key = citationKey(messageId, citation);
-      return (
-        <CitationBadge
-          key={`c-${index}`}
-          number={citationNumber}
-          title={citation.sourceTitle}
-          active={activeCitationKey === key}
-          onClick={() => onCitationClick(citation, messageId)}
-        />
-      );
-    });
-  }
+	if (typeof node === "string") {
+		const parts = node.split(/(\[\d+\])/g);
+		return parts.map((part, index) => {
+			const match = part.match(/^\[(\d+)\]$/);
+			if (!match) {
+				return <span key={`t-${index}`}>{part}</span>;
+			}
+			const citationNumber = Number(match[1]);
+			const citation =
+				citations.find((item) => item.citationNumber === citationNumber) ??
+				citations[citationNumber - 1];
+			if (!citation) {
+				return <span key={`c-${index}`}>{part}</span>;
+			}
+			const key = citationKey(messageId, citation);
+			return (
+				<CitationBadge
+					key={`c-${index}`}
+					number={citationNumber}
+					title={citation.sourceTitle}
+					active={activeCitationKey === key}
+					onClick={() => onCitationClick(citation, messageId)}
+				/>
+			);
+		});
+	}
 
-  if (Array.isArray(node)) {
-    return node.map((child, index) => (
-      <span key={index}>
-        {injectCitationBadges(
-          child,
-          citations,
-          messageId,
-          activeCitationKey,
-          onCitationClick,
-        )}
-      </span>
-    ));
-  }
+	if (Array.isArray(node)) {
+		return node.map((child, index) => (
+			<span key={index}>
+				{injectCitationBadges(
+					child,
+					citations,
+					messageId,
+					activeCitationKey,
+					onCitationClick,
+				)}
+			</span>
+		));
+	}
 
-  return node;
+	return node;
 }
 
 function MarkdownWithCitations({
-  content,
-  citations,
-  messageId,
-  activeCitationKey,
-  onCitationClick,
+	content,
+	citations,
+	messageId,
+	activeCitationKey,
+	onCitationClick,
 }: {
-  content: string;
-  citations: MessageCitation[];
-  messageId: string;
-  activeCitationKey: string | null;
-  onCitationClick: (citation: MessageCitation, messageId: string) => void;
+	content: string;
+	citations: MessageCitation[];
+	messageId: string;
+	activeCitationKey: string | null;
+	onCitationClick: (citation: MessageCitation, messageId: string) => void;
 }) {
-  const wrap =
-    (Tag: "p" | "li" | "td" | "th" | "strong" | "em") =>
-    ({ children }: { children?: ReactNode }) => {
-      const Comp = Tag;
-      return (
-        <Comp>
-          {injectCitationBadges(
-            children,
-            citations,
-            messageId,
-            activeCitationKey,
-            onCitationClick,
-          )}
-        </Comp>
-      );
-    };
+	const wrap =
+		(Tag: "p" | "li" | "td" | "th" | "strong" | "em") =>
+		({ children }: { children?: ReactNode }) => {
+			const Comp = Tag;
+			return (
+				<Comp>
+					{injectCitationBadges(
+						children,
+						citations,
+						messageId,
+						activeCitationKey,
+						onCitationClick,
+					)}
+				</Comp>
+			);
+		};
 
-  return (
-    <div
-      className={cn(
-        "prose prose-sm dark:prose-invert max-w-none text-foreground",
-        "prose-p:my-2 prose-ul:my-2 prose-li:my-0.5 prose-pre:my-3",
-        "prose-headings:font-[Fraunces,serif] prose-headings:text-foreground",
-        "prose-strong:font-semibold prose-strong:text-foreground",
-        "prose-em:text-foreground",
-        "prose-a:font-medium prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
-        "prose-code:before:content-none prose-code:after:content-none",
-      )}
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          p: wrap("p"),
-          li: wrap("li"),
-          td: wrap("td"),
-          th: wrap("th"),
-          strong: wrap("strong"),
-          em: wrap("em"),
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
-  );
+	return (
+		<div
+			className={cn(
+				"prose prose-sm dark:prose-invert max-w-none text-foreground",
+				"prose-p:my-2 prose-ul:my-2 prose-li:my-0.5 prose-pre:my-3",
+				"prose-headings:font-[Fraunces,serif] prose-headings:text-foreground",
+				"prose-strong:font-semibold prose-strong:text-foreground",
+				"prose-em:text-foreground",
+				"prose-a:font-medium prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
+				"prose-code:before:content-none prose-code:after:content-none",
+			)}
+		>
+			<ReactMarkdown
+				remarkPlugins={[remarkGfm]}
+				components={{
+					p: wrap("p"),
+					li: wrap("li"),
+					td: wrap("td"),
+					th: wrap("th"),
+					strong: wrap("strong"),
+					em: wrap("em"),
+				}}
+			>
+				{content}
+			</ReactMarkdown>
+		</div>
+	);
 }
 
 export function ChatBubble({
-  message,
-  activeCitationKey,
-  onCitationClick,
-  onRegenerate,
-  isLastAssistant,
+	message,
+	activeCitationKey,
+	onCitationClick,
+	onFollowUpAsk,
+	followUpsDisabled = false,
+	onRegenerate,
+	isLastAssistant,
 }: {
-  message: ChatMessageDTO;
-  activeCitationKey: string | null;
-  onCitationClick: (citation: MessageCitation, messageId: string) => void;
-  onRegenerate?: () => void;
-  isLastAssistant?: boolean;
+	message: ChatMessageDTO;
+	activeCitationKey: string | null;
+	onCitationClick: (citation: MessageCitation, messageId: string) => void;
+	onFollowUpAsk?: (question: string) => void;
+	followUpsDisabled?: boolean;
+	onRegenerate?: () => void;
+	isLastAssistant?: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
-  const isUser = message.role === "user";
+	const [copied, setCopied] = useState(false);
+	const isUser = message.role === "user";
 
-  const citationChips = useMemo(
-    () => message.citations ?? [],
-    [message.citations],
-  );
+	const citationChips = useMemo(
+		() => message.citations ?? [],
+		[message.citations],
+	);
 
-  async function handleCopy() {
-    await navigator.clipboard.writeText(message.content);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  }
+	const { body: assistantBody, questions: followUps } = useMemo(
+		() =>
+			isUser
+				? { body: message.content, questions: [] as string[] }
+				: splitFollowUpQuestions(message.content),
+		[isUser, message.content],
+	);
 
-  return (
-    <div
-      className={cn(
-        "group flex w-full flex-col gap-2",
-        isUser ? "items-end" : "items-start",
-      )}
-    >
-      <div
-        className={cn(
-          "max-w-[min(100%,42rem)] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-          isUser
-            ? "bg-foreground text-background"
-            : "border border-border bg-card text-foreground shadow-[var(--shadow-soft)]",
-        )}
-      >
-        {isUser ? (
-          <p className="whitespace-pre-wrap">{message.content}</p>
-        ) : (
-          <MarkdownWithCitations
-            content={message.content}
-            citations={citationChips}
-            messageId={message.id}
-            activeCitationKey={activeCitationKey}
-            onCitationClick={onCitationClick}
-          />
-        )}
+	async function handleCopy() {
+		await navigator.clipboard.writeText(message.content);
+		setCopied(true);
+		window.setTimeout(() => setCopied(false), 1500);
+	}
 
-        {!isUser && citationChips.length > 0 ? (
-          <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border pt-3">
-            {citationChips.map((citation) => {
-              const key = citationKey(message.id, citation);
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => onCitationClick(citation, message.id)}
-                  className={cn(
-                    "max-w-full rounded-full px-2.5 py-1 text-left text-xs font-medium transition focus-ring",
-                    activeCitationKey === key
-                      ? "bg-accent text-foreground ring-2 ring-primary"
-                      : "bg-muted text-foreground/80 hover:bg-muted/80 hover:text-foreground",
-                  )}
-                >
-                  <span className="text-primary">
-                    [{citation.citationNumber}]
-                  </span>{" "}
-                  <span className="wrap-break-word">
-                    {citation.sourceTitle ?? "Source"}
-                  </span>
-                  {citation.locator?.page != null
-                    ? ` · p.${citation.locator.page}`
-                    : ""}
-                  {citation.locator?.tStart != null
-                    ? ` · ${formatCitationClock(citation.locator.tStart)}`
-                    : ""}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
+	return (
+		<div
+			className={cn(
+				"group flex w-full flex-col gap-2",
+				isUser ? "items-end" : "items-start",
+			)}
+		>
+			<div
+				className={cn(
+					"max-w-[min(100%,42rem)] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+					isUser
+						? "bg-foreground text-background"
+						: "border border-border bg-card text-foreground shadow-[var(--shadow-soft)]",
+				)}
+			>
+				{isUser ? (
+					<p className="whitespace-pre-wrap">{message.content}</p>
+				) : (
+					<MarkdownWithCitations
+						content={assistantBody}
+						citations={citationChips}
+						messageId={message.id}
+						activeCitationKey={activeCitationKey}
+						onCitationClick={onCitationClick}
+					/>
+				)}
 
-      {!isUser ? (
-        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            onClick={() => void handleCopy()}
-            aria-label="Copy answer"
-          >
-            {copied ? <Check /> : <Copy />}
-            {copied ? "Copied" : "Copy"}
-          </Button>
-          {isLastAssistant && onRegenerate ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={onRegenerate}
-              aria-label="Regenerate answer"
-            >
-              <RefreshCw />
-              Regenerate
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
+				{!isUser && followUps.length > 0 ? (
+					<div className="mt-3 border-t border-border pt-3">
+						<p className="mb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+							Follow-up questions
+						</p>
+						<div className="flex flex-col gap-2">
+							{followUps.map((question) => (
+								<button
+									key={question}
+									type="button"
+									disabled={!onFollowUpAsk || followUpsDisabled}
+									onClick={() => onFollowUpAsk?.(question)}
+									className={cn(
+										"rounded-xl border border-border bg-muted/40 px-3 py-2.5 text-left text-sm text-foreground transition focus-ring",
+										!onFollowUpAsk || followUpsDisabled
+											? "cursor-not-allowed opacity-60"
+											: "hover:border-primary/40 hover:bg-accent",
+									)}
+								>
+									{question}
+								</button>
+							))}
+						</div>
+					</div>
+				) : null}
+
+				{!isUser && citationChips.length > 0 ? (
+					<div className="mt-3 flex flex-wrap gap-1.5 border-t border-border pt-3">
+						{citationChips.map((citation) => {
+							const key = citationKey(message.id, citation);
+							return (
+								<button
+									key={key}
+									type="button"
+									onClick={() => onCitationClick(citation, message.id)}
+									className={cn(
+										"max-w-full rounded-full px-2.5 py-1 text-left text-xs font-medium transition focus-ring",
+										activeCitationKey === key
+											? "bg-accent text-foreground ring-2 ring-primary"
+											: "bg-muted text-foreground/80 hover:bg-muted/80 hover:text-foreground",
+									)}
+								>
+									<span className="text-primary">
+										[{citation.citationNumber}]
+									</span>{" "}
+									<span className="wrap-break-word">
+										{citation.sourceTitle ?? "Source"}
+									</span>
+									{citation.locator?.page != null
+										? ` · p.${citation.locator.page}`
+										: ""}
+									{citation.locator?.tStart != null
+										? ` · ${formatCitationClock(citation.locator.tStart)}`
+										: ""}
+								</button>
+							);
+						})}
+					</div>
+				) : null}
+			</div>
+
+			{!isUser ? (
+				<div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+					<Button
+						type="button"
+						variant="ghost"
+						size="xs"
+						onClick={() => void handleCopy()}
+						aria-label="Copy answer"
+					>
+						{copied ? <Check /> : <Copy />}
+						{copied ? "Copied" : "Copy"}
+					</Button>
+					{isLastAssistant && onRegenerate ? (
+						<Button
+							type="button"
+							variant="ghost"
+							size="xs"
+							onClick={onRegenerate}
+							aria-label="Regenerate answer"
+						>
+							<RefreshCw />
+							Regenerate
+						</Button>
+					) : null}
+				</div>
+			) : null}
+		</div>
+	);
 }
 
 export function TypingIndicator() {
-  return (
-    <div className="mr-auto inline-flex items-center gap-1.5 rounded-2xl border border-border bg-card px-4 py-3 shadow-[var(--shadow-soft)]">
-      <span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
-      <span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
-      <span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
-      <span className="sr-only">Generating answer</span>
-    </div>
-  );
+	return (
+		<div className="mr-auto inline-flex items-center gap-1.5 rounded-2xl border border-border bg-card px-4 py-3 shadow-[var(--shadow-soft)]">
+			<span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
+			<span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
+			<span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
+			<span className="sr-only">Generating answer</span>
+		</div>
+	);
 }

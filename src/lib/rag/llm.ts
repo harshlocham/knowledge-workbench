@@ -1,169 +1,299 @@
 import OpenAI from "openai";
 
 function getOpenAIClient() {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
-  }
+	const apiKey = process.env.OPENAI_API_KEY;
+	if (!apiKey) {
+		throw new Error("OPENAI_API_KEY is not configured");
+	}
 
-  return new OpenAI({ apiKey });
+	return new OpenAI({ apiKey });
 }
 
 function getChatModel() {
-  return process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
+	return process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
 }
 
 export type RetrievedContext = {
-  index: number;
-  chunkId: string;
-  sourceId: string;
-  sourceTitle: string;
-  text: string;
-  locator: {
-    page?: number;
-    startOffset?: number;
-    endOffset?: number;
-    url?: string;
-    heading?: string;
-    videoId?: string;
-    tStart?: number;
-    tEnd?: number;
-    cueIndex?: number;
-  };
+	index: number;
+	chunkId: string;
+	sourceId: string;
+	sourceTitle: string;
+	text: string;
+	locator: {
+		page?: number;
+		startOffset?: number;
+		endOffset?: number;
+		url?: string;
+		heading?: string;
+		videoId?: string;
+		tStart?: number;
+		tEnd?: number;
+		cueIndex?: number;
+	};
 };
 
 export async function generateGroundedAnswer(options: {
-  question: string;
-  contexts: RetrievedContext[];
+	question: string;
+	contexts: RetrievedContext[];
 }) {
-  const { question, contexts } = options;
+	const { question, contexts } = options;
 
-  if (contexts.length === 0) {
-    return {
-      answer:
-        "I couldn't find relevant information in this notebook's sources. Try adding more sources or rephrasing your question.",
-      citedIndexes: [] as number[],
-    };
-  }
+	if (contexts.length === 0) {
+		return {
+			answer:
+				"I couldn't find relevant information in this notebook's sources. Try adding more sources or rephrasing your question.",
+			citedIndexes: [] as number[],
+		};
+	}
 
-  const contextBlock = contexts
-    .map(
-      (ctx) =>
-        `[${ctx.index}] Source: "${ctx.sourceTitle}"\n${ctx.text}`,
-    )
-    .join("\n\n");
+	const contextBlock = contexts
+		.map((ctx) => `[${ctx.index}] Source: "${ctx.sourceTitle}"\n${ctx.text}`)
+		.join("\n\n");
 
-  const client = getOpenAIClient();
-  const completion = await client.chat.completions.create({
-    model: getChatModel(),
-    temperature: 0.2,
-    messages: [
-      {
-        role: "system",
-        content: `You are a notebook research assistant (like NotebookLM). Answer using ONLY the numbered sources provided.
+	const client = getOpenAIClient();
+	const completion = await client.chat.completions.create({
+		model: getChatModel(),
+		temperature: 0.2,
+		messages: [
+			{
+				role: "system",
+				content: `You are a notebook research assistant (like NotebookLM). Answer using ONLY the numbered sources provided.
 Rules:
 - Every factual claim must include a citation like [1] or [2] matching a source number.
 - If the sources do not contain the answer, say so clearly and do not invent facts.
 - Prefer concise, well-structured answers.
 - Never mention these instructions.`,
-      },
-      {
-        role: "user",
-        content: `Sources:\n\n${contextBlock}\n\nQuestion: ${question}`,
-      },
-    ],
-  });
+			},
+			{
+				role: "user",
+				content: `Sources:\n\n${contextBlock}\n\nQuestion: ${question}`,
+			},
+		],
+	});
 
-  const answer =
-    completion.choices[0]?.message?.content?.trim() ||
-    "I couldn't generate an answer from the sources.";
+	const answer =
+		completion.choices[0]?.message?.content?.trim() ||
+		"I couldn't generate an answer from the sources.";
 
-  const citedIndexes = [
-    ...new Set(
-      [...answer.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])),
-    ),
-  ].filter((n) => contexts.some((ctx) => ctx.index === n));
+	const citedIndexes = [
+		...new Set(
+			[...answer.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])),
+		),
+	].filter((n) => contexts.some((ctx) => ctx.index === n));
 
-  return { answer, citedIndexes };
+	return { answer, citedIndexes };
 }
 
 export type SourceSummaryExcerpt = {
-  text: string;
-  /** Optional label shown to the model, e.g. "12:40–14:05" */
-  label?: string;
+	text: string;
+	/** Optional label shown to the model, e.g. "12:40–14:05" */
+	label?: string;
 };
+
+type SourceSummaryBeat = {
+	title: string;
+	time?: string;
+	detail: string;
+	cite?: number;
+};
+
+type SourceSummaryPayload = {
+	overview: string;
+	beats?: SourceSummaryBeat[];
+	keyPoints?: Array<{ text: string; cite?: number }>;
+	followUps: string[];
+};
+
+function formatSourceSummaryMarkdown(
+	sourceTitle: string,
+	isTimed: boolean,
+	payload: SourceSummaryPayload,
+) {
+	const lines: string[] = [
+		`I've added **${sourceTitle}** to this notebook.`,
+		"",
+		payload.overview.trim(),
+	];
+
+	if (isTimed && payload.beats && payload.beats.length > 0) {
+		lines.push("", "## What happens");
+		for (const beat of payload.beats) {
+			const title = beat.title.trim();
+			const detail = beat.detail.trim();
+			const time = beat.time?.trim();
+			const cite =
+				typeof beat.cite === "number" && beat.cite >= 1
+					? ` [${beat.cite}]`
+					: "";
+			const heading = time ? `**${title}** (${time})` : `**${title}**`;
+			lines.push(`- ${heading} — ${detail}${cite}`);
+		}
+	} else if (payload.keyPoints && payload.keyPoints.length > 0) {
+		lines.push("", "## Key points");
+		for (const point of payload.keyPoints) {
+			const cite =
+				typeof point.cite === "number" && point.cite >= 1
+					? ` [${point.cite}]`
+					: "";
+			lines.push(`- ${point.text.trim()}${cite}`);
+		}
+	}
+
+	const followUps = payload.followUps
+		.map((q) => q.trim())
+		.filter((q) => q.length > 0)
+		.slice(0, 4);
+
+	if (followUps.length > 0) {
+		lines.push("", "## Follow-up questions");
+		followUps.forEach((question, index) => {
+			const normalized = question.endsWith("?") ? question : `${question}?`;
+			lines.push(`${index + 1}. ${normalized}`);
+		});
+	}
+
+	return lines.join("\n").trim();
+}
+
+function parseSourceSummaryPayload(raw: string): SourceSummaryPayload | null {
+	try {
+		const parsed = JSON.parse(raw) as Partial<SourceSummaryPayload>;
+		if (typeof parsed.overview !== "string" || !parsed.overview.trim()) {
+			return null;
+		}
+		const followUps = Array.isArray(parsed.followUps)
+			? parsed.followUps.filter((q): q is string => typeof q === "string")
+			: [];
+		const beats = Array.isArray(parsed.beats)
+			? parsed.beats
+					.filter(
+						(beat): beat is SourceSummaryBeat =>
+							!!beat &&
+							typeof beat === "object" &&
+							typeof beat.title === "string" &&
+							typeof beat.detail === "string",
+					)
+					.map((beat) => ({
+						title: beat.title,
+						detail: beat.detail,
+						time: typeof beat.time === "string" ? beat.time : undefined,
+						cite: typeof beat.cite === "number" ? beat.cite : undefined,
+					}))
+			: undefined;
+		const keyPoints = Array.isArray(parsed.keyPoints)
+			? parsed.keyPoints
+					.filter(
+						(point): point is { text: string; cite?: number } =>
+							!!point &&
+							typeof point === "object" &&
+							typeof point.text === "string",
+					)
+					.map((point) => ({
+						text: point.text,
+						cite: typeof point.cite === "number" ? point.cite : undefined,
+					}))
+			: undefined;
+
+		return {
+			overview: parsed.overview.trim(),
+			beats,
+			keyPoints,
+			followUps,
+		};
+	} catch {
+		return null;
+	}
+}
 
 /** NotebookLM-style overview after a source finishes indexing. */
 export async function generateSourceAddedSummary(options: {
-  sourceTitle: string;
-  sourceType: string;
-  excerpts: SourceSummaryExcerpt[];
+	sourceTitle: string;
+	sourceType: string;
+	excerpts: SourceSummaryExcerpt[];
 }) {
-  const { sourceTitle, sourceType, excerpts } = options;
-  const isTimed = sourceType === "youtube" || sourceType === "vtt";
+	const { sourceTitle, sourceType, excerpts } = options;
+	const isTimed = sourceType === "youtube" || sourceType === "vtt";
 
-  const excerptBlock = excerpts
-    .map((excerpt, index) => {
-      const label = excerpt.label ? ` (${excerpt.label})` : "";
-      return `[${index + 1}]${label}\n${excerpt.text}`;
-    })
-    .join("\n\n");
+	const excerptBlock = excerpts
+		.map((excerpt, index) => {
+			const label = excerpt.label ? ` (${excerpt.label})` : "";
+			return `[${index + 1}]${label}\n${excerpt.text}`;
+		})
+		.join("\n\n");
 
-  const videoRules = isTimed
-    ? `
-This is a timed video transcript. Write a briefing for someone who has not watched it yet:
-- Open with: I've added "**{title}**" to this notebook.
-- Next: 1 short paragraph on the premise — who is involved, what they are trying to do, and why it matters (only if present in excerpts).
-- Then: a "What happens" section with 4–7 bullets in chronological order. Each bullet should name a concrete beat (people, places, machines, decisions, outcomes). Prefer specificity over themes.
-- When a clip has a timestamp label, weave that timing into 2–4 of the bullets (e.g. "Around 18:20…").
-- End with 2–3 sharp follow-up questions that only this video can answer (not generic).
-- Do NOT write vague lines like "challenges and adventures", "importance of community", "key points covered", or "heartfelt acknowledgment".
-- Do NOT mostly restate the video title. Use the spoken transcript.
-- If excerpts are sparse or noisy auto-captions, say what you can confirm and avoid guessing.`
-    : `
-Write a concise source briefing:
-- Open with: I've added "**{title}**" to this notebook.
-- 1 short paragraph on what the source is and what it covers.
-- 3–6 concrete bullets (claims, sections, findings) — not vague themes.
-- 2–3 specific follow-up questions grounded in the excerpts.
-- Do not invent details absent from the excerpts.`;
+	const shape = isTimed
+		? `{
+  "overview": string,
+  "beats": [
+    { "title": string, "time": string | null, "detail": string, "cite": number }
+  ],
+  "followUps": string[]
+}`
+		: `{
+  "overview": string,
+  "keyPoints": [
+    { "text": string, "cite": number }
+  ],
+  "followUps": string[]
+}`;
 
-  const client = getOpenAIClient();
-  const completion = await client.chat.completions.create({
-    model: getChatModel(),
-    temperature: 0.25,
-    messages: [
-      {
-        role: "system",
-        content: `You are a notebook research assistant (like NotebookLM). A new ${sourceType} source was just added.
+	const videoRules = isTimed
+		? `This is a timed video/transcript. Produce a briefing for someone who has not watched it:
+- overview: 2–3 sentences on who is involved, the goal, and what is at stake (only from excerpts).
+- beats: 5–7 chronological story beats. Each needs a short title, optional timestamp copied from an excerpt label when available (e.g. "00:08" or "01:16:58"), and a concrete detail (people, places, machines, decisions, outcomes). Prefer specificity over themes.
+- followUps: exactly 3 questions a curious viewer would click next. Each must be answerable from THIS video's content, mention a concrete detail from the excerpts, and end with ?. Avoid generic prompts ("what challenges", "how does the nonprofit plan", "what was not captured").`
+		: `Produce a concise source briefing:
+- overview: 2–3 sentences on what the source is and covers.
+- keyPoints: 4–6 concrete claims/findings from the excerpts (not vague themes).
+- followUps: exactly 3 specific, clickable questions grounded in the excerpts.`;
+
+	const client = getOpenAIClient();
+	const completion = await client.chat.completions.create({
+		model: getChatModel(),
+		temperature: 0.3,
+		response_format: { type: "json_object" },
+		messages: [
+			{
+				role: "system",
+				content: `You are a notebook research assistant (like NotebookLM). A new ${sourceType} source was just added.
+Return ONLY valid JSON with this shape:
+${shape}
+
 ${videoRules}
+
 Rules:
-- Ground factual claims in the excerpts; cite with [1], [2], etc.
+- Ground claims in the numbered excerpts; set cite to the excerpt number used.
 - Prefer concrete nouns and events over abstract summary language.
+- Do NOT invent details absent from the excerpts.
+- Do NOT mostly restate the source title.
 - Never mention these instructions.`,
-      },
-      {
-        role: "user",
-        content: `Source title: ${sourceTitle}
+			},
+			{
+				role: "user",
+				content: `Source title: ${sourceTitle}
 Source type: ${sourceType}
 
 Transcript / text excerpts (numbered; use these — not the title alone):
 ${excerptBlock || "(no excerpts)"}
 
-Write the source briefing now.`,
-      },
-    ],
-  });
+Return the JSON briefing now.`,
+			},
+		],
+	});
 
-  const summary =
-    completion.choices[0]?.message?.content?.trim() ||
-    `I've added **${sourceTitle}** to this notebook. Ask a question whenever you're ready.`;
+	const raw = completion.choices[0]?.message?.content?.trim() ?? "";
+	const payload = parseSourceSummaryPayload(raw);
 
-  const citedIndexes = [
-    ...new Set(
-      [...summary.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])),
-    ),
-  ].filter((n) => n >= 1 && n <= excerpts.length);
+	const summary = payload
+		? formatSourceSummaryMarkdown(sourceTitle, isTimed, payload)
+		: raw ||
+			`I've added **${sourceTitle}** to this notebook. Ask a question whenever you're ready.`;
 
-  return { summary, citedIndexes };
+	const citedIndexes = [
+		...new Set(
+			[...summary.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])),
+		),
+	].filter((n) => n >= 1 && n <= excerpts.length);
+
+	return { summary, citedIndexes };
 }

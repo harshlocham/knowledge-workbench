@@ -821,6 +821,10 @@ export function NotebookWorkspace({
 								onCitationClick={(citation, messageId) =>
 									void openCitation(citation, messageId)
 								}
+								onFollowUpAsk={(followUp) => {
+									setQuestion(followUp);
+									void runAsk(followUp);
+								}}
 							/>
 						)}
 					</>
