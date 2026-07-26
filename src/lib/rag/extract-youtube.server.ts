@@ -1,7 +1,16 @@
 import { fetchTranscript } from "youtube-transcript";
 
 import type { VttCue } from "#/lib/rag/parse-vtt.server.ts";
-import { transcriptItemsToCues } from "#/lib/rag/youtube-transcript-shared.ts";
+import {
+  captionFetchUrls,
+  captionTracksFromPlayerResponse,
+  parseTranscriptXml,
+  parseYtInitialPlayerResponse,
+  sortCaptionTracks,
+  titleFromPlayerResponse,
+  transcriptItemsToCues,
+  type YoutubeTranscriptItem,
+} from "#/lib/rag/youtube-transcript-shared.ts";
 import {
   extractYoutubeVideoId,
   youtubeWatchUrl,
@@ -19,6 +28,9 @@ export { extractYoutubeVideoId, youtubeWatchUrl };
 
 /** Bun's fetch accepts `proxy`; TypeScript's DOM fetch typings do not. */
 type BunFetchInit = RequestInit & { proxy?: string };
+
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
 export function getYoutubeProxyUrl(): string | undefined {
   const value = process.env.YOUTUBE_PROXY_URL?.trim();
@@ -83,13 +95,13 @@ function transcriptFetchErrorMessage(error: unknown): string {
 }
 
 function isTransientTranscriptError(message: string) {
-  return /too many|captcha|receiving too many requests|sign in to confirm|not a bot/i.test(
+  return /too many|captcha|receiving too many requests|sign in to confirm|not a bot|empty transcript/i.test(
     message,
   );
 }
 
 function mapTranscriptFetchError(message: string): Error {
-  if (isTransientTranscriptError(message)) {
+  if (isTransientTranscriptError(message) && !/empty transcript/i.test(message)) {
     const viaProxy = getYoutubeProxyUrl()
       ? " Check YOUTUBE_PROXY_URL is a working residential proxy (`bun run verify:youtube-proxy` must print VPS_OK)."
       : " Set YOUTUBE_PROXY_URL to a residential proxy and verify with `bun run verify:youtube-proxy`.";
@@ -97,20 +109,110 @@ function mapTranscriptFetchError(message: string): Error {
       `YouTube blocked caption fetch from this egress IP.${viaProxy}`,
     );
   }
-  if (/disabled|not available|unavailable/i.test(message)) {
+  if (/disabled|not available|unavailable|empty transcript/i.test(message)) {
     return new Error(
-      "No captions available for this video (disabled, private, or missing transcript)",
+      "No captions available for this video (disabled, private, or missing transcript). Re-index later, or upload a .vtt if you have one.",
     );
   }
   return new Error(message);
 }
 
+/**
+ * Watch-page fallback: youtube-transcript's InnerTube path can return [] and
+ * skip HTML scraping (empty array is truthy). Try tracks ourselves via proxy.
+ */
+async function fetchTranscriptViaWatchPage(
+  videoId: string,
+): Promise<{ items: YoutubeTranscriptItem[]; title: string | null }> {
+  const response = await youtubeFetch(youtubeWatchUrl(videoId), {
+    headers: {
+      "User-Agent": USER_AGENT,
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+  });
+  const html = await response.text();
+
+  if (/class="g-recaptcha"|sign in to confirm you.re not a bot/i.test(html)) {
+    throw new Error(
+      "YouTube is receiving too many requests from this IP and now requires solving a captcha to continue",
+    );
+  }
+
+  const player = parseYtInitialPlayerResponse(html);
+  if (!player) {
+    return { items: [], title: null };
+  }
+
+  const title = titleFromPlayerResponse(player);
+  const tracks = sortCaptionTracks(captionTracksFromPlayerResponse(player));
+  if (tracks.length === 0) {
+    return { items: [], title };
+  }
+
+  for (const track of tracks) {
+    for (const url of captionFetchUrls(track.baseUrl)) {
+      try {
+        const captionUrl = new URL(url);
+        if (!captionUrl.hostname.endsWith("youtube.com")) {
+          continue;
+        }
+        const captionResponse = await youtubeFetch(captionUrl.toString(), {
+          headers: { "User-Agent": USER_AGENT },
+        });
+        if (!captionResponse.ok) continue;
+        const xml = await captionResponse.text();
+        const items = parseTranscriptXml(xml, track.languageCode).filter(
+          (item) => item.text.trim().length > 0,
+        );
+        if (items.length > 0) {
+          return { items, title };
+        }
+      } catch {
+        // try next track/url
+      }
+    }
+  }
+
+  return { items: [], title };
+}
+
+async function fetchTranscriptItems(
+  videoId: string,
+): Promise<{ items: YoutubeTranscriptItem[]; pageTitle: string | null }> {
+  // Library first (InnerTube). Empty [] must not stop the HTML fallback.
+  try {
+    const items = await fetchTranscript(videoId, { fetch: youtubeFetch });
+    if (items.length > 0) {
+      return { items, pageTitle: null };
+    }
+  } catch (error) {
+    const message = transcriptFetchErrorMessage(error);
+    // Hard failures that HTML won't fix — rethrow after mapping later.
+    if (
+      /too many|captcha|receiving too many requests|sign in to confirm|not a bot/i.test(
+        message,
+      )
+    ) {
+      throw error;
+    }
+    // disabled / unavailable — still try watch page once (sometimes more accurate)
+  }
+
+  return fetchTranscriptViaWatchPage(videoId);
+}
+
 async function fetchTranscriptWithRetry(videoId: string) {
   let lastError: unknown;
+  let pageTitle: string | null = null;
 
   for (let attempt = 1; attempt <= TRANSCRIPT_FETCH_ATTEMPTS; attempt++) {
     try {
-      return await fetchTranscript(videoId, { fetch: youtubeFetch });
+      const result = await fetchTranscriptItems(videoId);
+      pageTitle = result.pageTitle ?? pageTitle;
+      if (result.items.length > 0) {
+        return { items: result.items, pageTitle };
+      }
+      lastError = new Error("YouTube returned an empty transcript");
     } catch (error) {
       lastError = error;
       const message = transcriptFetchErrorMessage(error);
@@ -122,8 +224,15 @@ async function fetchTranscriptWithRetry(videoId: string) {
         throw mapTranscriptFetchError(message);
       }
 
-      await sleep(400 * attempt);
+      await sleep(500 * attempt + Math.floor(Math.random() * 300));
+      continue;
     }
+
+    if (attempt === TRANSCRIPT_FETCH_ATTEMPTS) {
+      break;
+    }
+    // Empty often means soft rate-limit during playlist bursts.
+    await sleep(700 * attempt + Math.floor(Math.random() * 400));
   }
 
   throw mapTranscriptFetchError(transcriptFetchErrorMessage(lastError));
@@ -142,10 +251,10 @@ export async function extractYoutubeTranscript(
   const videoId = extractYoutubeVideoId(rawUrlOrId);
   const watchUrl = youtubeWatchUrl(videoId);
 
-  const items = await fetchTranscriptWithRetry(videoId);
+  const { items, pageTitle } = await fetchTranscriptWithRetry(videoId);
 
   if (!items.length) {
-    throw new Error("YouTube returned an empty transcript");
+    throw mapTranscriptFetchError("YouTube returned an empty transcript");
   }
 
   const cues = transcriptItemsToCues(items);
@@ -153,7 +262,10 @@ export async function extractYoutubeTranscript(
     throw new Error("YouTube transcript contained no usable text");
   }
 
-  const title = (await fetchYoutubeTitle(videoId)) ?? `YouTube ${videoId}`;
+  const title =
+    pageTitle ||
+    (await fetchYoutubeTitle(videoId)) ||
+    `YouTube ${videoId}`;
 
   return {
     videoId,

@@ -132,6 +132,72 @@ export function captionTracksFromPlayerResponse(
     }));
 }
 
+/** Parse `var ytInitialPlayerResponse = {...}` from a watch-page HTML body. */
+export function parseYtInitialPlayerResponse(
+  html: string,
+): Record<string, unknown> | null {
+  const startToken = "var ytInitialPlayerResponse = ";
+  const startIndex = html.indexOf(startToken);
+  if (startIndex === -1) {
+    // Some embeds use bare assignment without `var`.
+    const alt = "ytInitialPlayerResponse = ";
+    const altIndex = html.indexOf(alt);
+    if (altIndex === -1) return null;
+    return parseBalancedJsonObject(html, altIndex + alt.length);
+  }
+  return parseBalancedJsonObject(html, startIndex + startToken.length);
+}
+
+function parseBalancedJsonObject(
+  source: string,
+  jsonStart: number,
+): Record<string, unknown> | null {
+  let depth = 0;
+  for (let i = jsonStart; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(source.slice(jsonStart, i + 1)) as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Prefer English tracks, then keep original order. */
+export function sortCaptionTracks(tracks: CaptionTrack[]): CaptionTrack[] {
+  return [...tracks].sort((a, b) => {
+    const score = (code: string) =>
+      code === "en" || code.startsWith("en-") ? 0 : 1;
+    return score(a.languageCode) - score(b.languageCode);
+  });
+}
+
+/** Candidate caption URLs — default + srv3 (library often gets empty XML otherwise). */
+export function captionFetchUrls(baseUrl: string): string[] {
+  const urls = [baseUrl];
+  try {
+    const withSrv3 = new URL(baseUrl);
+    if (!withSrv3.hostname.endsWith("youtube.com")) {
+      return urls;
+    }
+    withSrv3.searchParams.set("fmt", "srv3");
+    urls.push(withSrv3.toString());
+  } catch {
+    // keep base only
+  }
+  return [...new Set(urls)];
+}
+
 export function titleFromPlayerResponse(
   player: Record<string, unknown>,
 ): string | null {

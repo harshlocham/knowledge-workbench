@@ -12,10 +12,9 @@ config({ path: ".env" });
 
 const videoId = process.argv[2] || "Mgytm8a8uEc";
 
-const { fetchTranscript } = await import("youtube-transcript");
 const {
+  extractYoutubeTranscript,
   getYoutubeProxyUrl,
-  youtubeFetch,
 } = await import("../src/lib/rag/extract-youtube.server.ts");
 
 const proxy = getYoutubeProxyUrl();
@@ -36,12 +35,12 @@ if (proxy) {
 }
 
 try {
-  const items = await fetchTranscript(videoId, { fetch: youtubeFetch });
-  if (!items.length) {
+  const result = await extractYoutubeTranscript(videoId);
+  if (!result.cues.length) {
     console.log("VPS_FAIL", "empty transcript");
     process.exit(1);
   }
-  console.log("VPS_OK", items.length);
+  console.log("VPS_OK", result.cues.length, result.title.slice(0, 60));
   process.exit(0);
 } catch (error) {
   console.log(

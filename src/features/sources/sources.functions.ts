@@ -560,7 +560,12 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
           throw new Error("Failed to create YouTube source from playlist");
         }
 
+        // Stagger playlist caption fetches — burst calls often return empty XML.
+        const startDelayMs = index * 1_500;
         enqueueBackgroundJob(`index-youtube:${row.id}`, async () => {
+          if (startDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, startDelayMs));
+          }
           await indexYoutubeSource({
             sourceId: row.id,
             notebookId: data.notebookId,
