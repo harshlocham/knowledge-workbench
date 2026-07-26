@@ -25,6 +25,8 @@ import {
   extractYoutubeVideoId,
   youtubeWatchUrl,
 } from "#/lib/rag/extract-youtube.server.ts";
+import { extractYoutubePlaylist } from "#/lib/rag/extract-youtube-playlist.server.ts";
+import { isYoutubePlaylistUrl } from "#/lib/rag/youtube-url.ts";
 import { indexPdfSource } from "#/lib/rag/index-pdf-source.server.ts";
 import {
   clearSourceIndex,
@@ -478,8 +480,78 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await beginCreate(data.notebookId);
+    const { userId } = await requireOwnedNotebook(data.notebookId);
+    assertCreateRateLimit(userId);
     assertYoutubeProxyConfiguredForProduction();
+
+    // Playlist → one YouTube source per video (same indexer + proxy).
+    if (isYoutubePlaylistUrl(data.url)) {
+      const playlist = await extractYoutubePlaylist(data.url);
+      await assertNotebookSourceCapacity(
+        data.notebookId,
+        playlist.videos.length,
+      );
+
+      const created: SourceDTO[] = [];
+      for (const [index, video] of playlist.videos.entries()) {
+        const watchUrl = youtubeWatchUrl(video.videoId);
+        const title =
+          data.title?.trim() && playlist.videos.length === 1
+            ? data.title.trim()
+            : (video.title?.trim() ||
+                `${playlist.title} · ${index + 1}/${playlist.videos.length}`);
+
+        const [row] = await db
+          .insert(sources)
+          .values({
+            notebookId: data.notebookId,
+            type: "youtube",
+            title: title.slice(0, INGEST_LIMITS.maxTitleLength),
+            status: "indexing",
+            originalUrl: watchUrl,
+            metadata: {
+              videoId: video.videoId,
+              playlistId: playlist.playlistId,
+              playlistUrl: playlist.playlistUrl,
+              playlistTitle: playlist.title,
+              playlistIndex: index + 1,
+              indexProgress: {
+                phase: "queued",
+                percent: 5,
+                message: "Queued for indexing…",
+              },
+            },
+          })
+          .returning();
+
+        if (!row) {
+          throw new Error("Failed to create YouTube source from playlist");
+        }
+
+        enqueueBackgroundJob(`index-youtube:${row.id}`, async () => {
+          await indexYoutubeSource({
+            sourceId: row.id,
+            notebookId: data.notebookId,
+            ownerId: userId,
+            urlOrId: video.videoId,
+            updateTitleFromVideo: !video.title?.trim(),
+            existingMetadata: {
+              videoId: video.videoId,
+              playlistId: playlist.playlistId,
+              playlistUrl: playlist.playlistUrl,
+              playlistTitle: playlist.title,
+              playlistIndex: index + 1,
+            },
+          });
+        });
+
+        created.push(await refreshSource(row.id));
+      }
+
+      return { sources: created, playlistTitle: playlist.title };
+    }
+
+    await assertNotebookSourceCapacity(data.notebookId, 1);
 
     let videoId: string;
     try {
@@ -527,7 +599,10 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
       });
     });
 
-    return refreshSource(row.id);
+    return {
+      sources: [await refreshSource(row.id)],
+      playlistTitle: null as string | null,
+    };
   });
 
 export const reindexSource = createServerFn({ method: "POST" })

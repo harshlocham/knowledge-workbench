@@ -58,6 +58,8 @@ docker compose -f docker-compose.prod.yml exec app bun run verify:youtube-proxy
 
 Only keep that proxy if you see `VPS_OK`. Datacenter pools often print `VPS_FAIL` (same as bare VPS). Production refuses YouTube indexing without `YOUTUBE_PROXY_URL`. Local `bun dev` can omit it (home IP usually works).
 
+**Playlists:** paste a `/playlist?list=…` URL to import up to 25 videos as separate YouTube sources (each indexed via the same proxy). Watch URLs with `&list=` still add only that one video.
+
 ```bash
 docker compose -f docker-compose.prod.yml logs -f
 docker compose -f docker-compose.prod.yml down

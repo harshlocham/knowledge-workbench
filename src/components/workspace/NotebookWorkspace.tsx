@@ -484,13 +484,22 @@ export function NotebookWorkspace({
 					},
 				});
 			} else {
-				created = await createYoutubeSourceFn({
+				const result = await createYoutubeSourceFn({
 					data: {
 						notebookId: notebook.id,
 						url: payload.youtubeUrl.trim(),
 						title: payload.title.trim() || undefined,
 					},
 				});
+				const createdSources = result.sources;
+				setSources((prev) => {
+					const ids = new Set(createdSources.map((s) => s.id));
+					return [
+						...createdSources,
+						...prev.filter((s) => !ids.has(s.id)),
+					];
+				});
+				return;
 			}
 			setSources((prev) => [
 				created,

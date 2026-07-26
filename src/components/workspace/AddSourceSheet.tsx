@@ -181,7 +181,7 @@ export function AddSourceSheet({
     }
     const trimmed = paste.trim();
     if (!trimmed) return null;
-    if (isYoutubeUrl(trimmed)) return "Detected YouTube video";
+    if (isYoutubeUrl(trimmed)) return "Detected YouTube video or playlist";
     const detected = detectSourceInput({ text: trimmed });
     if (detected?.kind === "url") return "Detected website URL";
     if (detected?.kind === "text") {

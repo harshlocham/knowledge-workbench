@@ -24,16 +24,22 @@ export function assertCreateRateLimit(userId: string) {
   createBuckets.set(userId, prior);
 }
 
-export async function assertNotebookSourceCapacity(notebookId: string) {
+export async function assertNotebookSourceCapacity(
+  notebookId: string,
+  additional = 1,
+) {
   const [row] = await db
     .select({ value: count() })
     .from(sources)
     .where(eq(sources.notebookId, notebookId));
 
   const total = row?.value ?? 0;
-  if (total >= INGEST_LIMITS.maxSourcesPerNotebook) {
+  if (total + additional > INGEST_LIMITS.maxSourcesPerNotebook) {
+    const remaining = Math.max(0, INGEST_LIMITS.maxSourcesPerNotebook - total);
     throw new Error(
-      `This notebook already has ${INGEST_LIMITS.maxSourcesPerNotebook} sources. Delete some before adding more.`,
+      remaining === 0
+        ? `This notebook already has ${INGEST_LIMITS.maxSourcesPerNotebook} sources. Delete some before adding more.`
+        : `Only ${remaining} source slot${remaining === 1 ? "" : "s"} left in this notebook, but this playlist needs ${additional}. Delete some sources or add fewer videos.`,
     );
   }
 }

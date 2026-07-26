@@ -10,6 +10,8 @@ export const INGEST_LIMITS = {
 	maxUrlLength: 2000,
 	maxTitleLength: 200,
 	maxFileNameLength: 260,
+	/** Max videos imported from one playlist URL. */
+	maxPlaylistVideos: 25,
 } as const;
 
 export function formatBytes(bytes: number) {
@@ -38,6 +40,9 @@ export function friendlyIngestError(error: unknown, fallback: string) {
 		lower.includes("mb") ||
 		lower.includes("too large")
 	) {
+		return message;
+	}
+	if (lower.includes("playlist")) {
 		return message;
 	}
 	if (lower.includes("youtube_proxy") || lower.includes("verify:youtube-proxy")) {
