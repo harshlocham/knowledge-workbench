@@ -158,7 +158,7 @@ erDiagram
 | Store | Owns |
 |--------|------|
 | **Postgres** | Notebooks, sources, chunk text, locators, chat messages |
-| **Qdrant** (`knowledge_chunks`) | Embedding vectors + payload (`notebookId`, `sourceId`, `chunkId`, `ownerId`, `text`, `locator`, …) |
+| **Qdrant** (`knowledge_chunks`) | Embedding vectors + slim payload (`notebookId`, `sourceId`, `chunkId`, `ownerId`, `locator`, …). Full text is hydrated from Postgres after search. |
 
 Rows and points stay aligned via `chunks.qdrantPointId` (same UUID as the Qdrant point id). See `src/lib/qdrant/points.ts`.
 
@@ -422,6 +422,8 @@ Local Qdrant:
 ```bash
 docker compose up -d
 ```
+
+VPS prod (`docker-compose.prod.yml`) also runs Qdrant on the same host (`http://qdrant:6333`, not published publicly). Postgres stays external. After leaving Qdrant Cloud, re-index sources.
 
 ---
 

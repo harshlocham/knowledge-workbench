@@ -24,14 +24,13 @@ bun run dev
 
 App: [http://localhost:3000](http://localhost:3000).
 
-## Deploy on VPS (app + Caddy)
+## Deploy on VPS (app + Caddy + Qdrant)
 
-Postgres and Qdrant stay **external** (Neon/Supabase + Qdrant Cloud, or any remote hosts). The VPS runs the **app** and **Caddy** (HTTPS reverse proxy). The app is not published on the host — only Caddy exposes `80` / `443`.
+The VPS runs **app**, **Caddy** (HTTPS), and **Qdrant** on the same Docker network so vector upserts stay local (fast). Postgres stays **external** (Neon/Supabase/etc). The app is not published on the host — only Caddy exposes `80` / `443`. Qdrant is not exposed publicly.
 
-### 1. Prepare managed services
+### 1. Prepare managed Postgres + storage
 
 - Create a Postgres database and copy its connection string → `DATABASE_URL`
-- Create a Qdrant cluster/collection and set `QDRANT_URL` (+ `QDRANT_API_KEY` if needed)
 - Prefer **S3 or Cloudflare R2** for uploads (`S3_*`) so files survive container rebuilds
 - Point your domain’s **A/AAAA** records at the VPS
 
@@ -40,14 +39,16 @@ Postgres and Qdrant stay **external** (Neon/Supabase + Qdrant Cloud, or any remo
 ```bash
 git clone <your-repo> && cd knowledge-workbench
 cp .env.example .env
-# Set DOMAIN, Clerk, OPENAI_API_KEY,
-# and external DATABASE_URL / QDRANT_URL
+# Set DOMAIN, Clerk, OPENAI_API_KEY, DATABASE_URL
+# QDRANT_URL is overridden by compose to http://qdrant:6333 — leave Cloud blank
 
-# Open firewall: 80 and 443 (not 3000)
+# Open firewall: 80 and 443 (not 3000 / not 6333)
 docker compose -f docker-compose.prod.yml up --build -d
 ```
 
 Migrations run automatically on app container start. Caddy issues a Let’s Encrypt cert for `DOMAIN`.
+
+**Migrating off Qdrant Cloud:** after deploy, re-index each source (or remove and re-add). Vectors do not copy from Cloud automatically.
 
 ```bash
 docker compose -f docker-compose.prod.yml logs -f
@@ -87,7 +88,7 @@ Full diagrams: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 | `DOMAIN` | Caddy site address (auto HTTPS via Let’s Encrypt) |
 | `VITE_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` | Required; publishable key is baked at **image build** time |
 | `DATABASE_URL` | External Postgres |
-| `QDRANT_URL` / `QDRANT_API_KEY` | External Qdrant |
+| `QDRANT_URL` / `QDRANT_API_KEY` | Local: `http://127.0.0.1:6333`. Prod compose forces `http://qdrant:6333` and clears the API key |
 | `OPENAI_API_KEY` | Required |
 | `S3_*` | Recommended on VPS instead of local disk |
 

@@ -1,9 +1,18 @@
-# VPS: app + Caddy (TLS). Postgres / Qdrant stay external.
+# VPS: app + Caddy (TLS) + Qdrant on the same host.
+# Postgres stays external (Neon/Supabase/etc).
 #
-#   cp .env.example .env   # set DOMAIN, secrets, external URLs
+#   cp .env.example .env   # set DOMAIN, secrets, DATABASE_URL
 #   docker compose -f docker-compose.prod.yml up --build -d
-
 services:
+  qdrant:
+    image: qdrant/qdrant:v1.13.2
+    restart: unless-stopped
+    # Internal only — do not publish 6333 on the VPS
+    expose:
+      - "6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
   app:
     build:
       context: .
@@ -19,10 +28,15 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       UPLOAD_DIR: /app/uploads
+      # Co-located Qdrant (overrides Cloud URL from .env)
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ""
     volumes:
       - uploads_data:/app/uploads
     expose:
       - "3000"
+    depends_on:
+      - qdrant
 
   caddy:
     image: caddy:2.10-alpine
@@ -41,6 +55,7 @@ services:
       - app
 
 volumes:
+  qdrant_data:
   uploads_data:
   caddy_data:
   caddy_config:

@@ -1,5 +1,5 @@
-# Local dependencies only 
-# For VPS app-only deploy, use: docker compose -f docker-compose.prod.yml up -d
+# Local dependencies only.
+# For VPS (app + Caddy + Qdrant): docker compose -f docker-compose.prod.yml up -d
 
 services:
   postgres:
