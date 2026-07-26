@@ -417,13 +417,13 @@ See [`.env.example`](../.env.example).
 | `S3_*` | Optional object storage |
 | `OPENAI_API_KEY`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_CHAT_MODEL` | OpenAI |
 
-Local Qdrant:
+Local Qdrant (dev):
 
 ```bash
 docker compose up -d
 ```
 
-VPS prod (`docker-compose.prod.yml`) also runs Qdrant on the same host (`http://qdrant:6333`, not published publicly). Postgres stays external. After leaving Qdrant Cloud, re-index sources.
+VPS prod uses **Qdrant Cloud** via `QDRANT_URL` / `QDRANT_API_KEY` in `.env` (not a compose service).
 
 ---
 

@@ -39,7 +39,11 @@ export function extractYoutubeVideoId(input: string): string {
     }
   }
 
-  if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+  if (
+    host === "youtube.com" ||
+    host === "m.youtube.com" ||
+    host === "music.youtube.com"
+  ) {
     const v = url.searchParams.get("v");
     if (v && VIDEO_ID_RE.test(v)) {
       return v;
@@ -81,6 +85,9 @@ async function fetchYoutubeTitle(videoId: string): Promise<string | null> {
 
 const TRANSCRIPT_FETCH_ATTEMPTS = 3;
 
+const IP_BLOCK_HINT =
+  "YouTube blocked caption fetch from this server IP (common on VPS/datacenter hosts). Upload a .vtt instead, or set YOUTUBE_PROXY_URL to a residential HTTP proxy and re-index.";
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -93,21 +100,55 @@ function transcriptFetchErrorMessage(error: unknown): string {
 
 /** Rate limits / captchas are often misreported as "disabled" by scrapers. */
 function isTransientTranscriptError(message: string) {
-  return /too many|captcha|receiving too many requests/i.test(message);
+  return /too many|captcha|receiving too many requests|blocked|ip.?block/i.test(
+    message,
+  );
+}
+
+function looksLikeMissingCaptions(message: string) {
+  return /disabled|not available|unavailable|no transcripts are available/i.test(
+    message,
+  );
 }
 
 function mapTranscriptFetchError(message: string): Error {
   if (isTransientTranscriptError(message)) {
-    return new Error(
-      "YouTube rate-limited caption fetch. Wait a moment and re-index.",
-    );
+    // On VPS, "too many requests" / captcha almost always means IP reputation.
+    return new Error(IP_BLOCK_HINT);
   }
-  if (/disabled|not available|unavailable/i.test(message)) {
+  if (looksLikeMissingCaptions(message)) {
+    // Same symptom on datacenter IPs even when the video has captions locally.
     return new Error(
-      "No captions available for this video (disabled, private, or missing transcript)",
+      `No captions available for this video (disabled, private, missing, or blocked). ${IP_BLOCK_HINT}`,
     );
   }
   return new Error(message);
+}
+
+/**
+ * Optional residential proxy for YouTube caption fetches.
+ * Bun's fetch accepts `proxy`; Node undici may ignore it — set at the host
+ * level via HTTPS_PROXY if needed.
+ */
+function youtubeFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const proxy =
+    process.env.YOUTUBE_PROXY_URL?.trim() ||
+    process.env.HTTPS_PROXY?.trim() ||
+    process.env.HTTP_PROXY?.trim() ||
+    undefined;
+
+  if (!proxy) {
+    return fetch(input, init);
+  }
+
+  return fetch(input, {
+    ...init,
+    // Bun extension — residential proxy for datacenter hosts
+    proxy,
+  } as RequestInit & { proxy: string });
 }
 
 async function fetchTranscriptWithRetry(videoId: string) {
@@ -115,13 +156,12 @@ async function fetchTranscriptWithRetry(videoId: string) {
 
   for (let attempt = 1; attempt <= TRANSCRIPT_FETCH_ATTEMPTS; attempt++) {
     try {
-      return await fetchTranscript(videoId);
+      return await fetchTranscript(videoId, { fetch: youtubeFetch });
     } catch (error) {
       lastError = error;
       const message = transcriptFetchErrorMessage(error);
       const retryable =
-        isTransientTranscriptError(message) ||
-        /disabled|not available|unavailable/i.test(message);
+        isTransientTranscriptError(message) || looksLikeMissingCaptions(message);
 
       if (!retryable || attempt === TRANSCRIPT_FETCH_ATTEMPTS) {
         throw mapTranscriptFetchError(message);
@@ -145,7 +185,9 @@ export async function extractYoutubeTranscript(
   const items = await fetchTranscriptWithRetry(videoId);
 
   if (!items.length) {
-    throw new Error("YouTube returned an empty transcript");
+    throw new Error(
+      `YouTube returned an empty transcript. ${IP_BLOCK_HINT}`,
+    );
   }
 
   // youtube-transcript srv3 tracks use milliseconds; classic XML uses seconds.
@@ -155,25 +197,26 @@ export async function extractYoutubeTranscript(
   );
   const offsetUnit = maxOffset >= 100_000 ? "ms" : "s";
 
-  const cues: VttCue[] = items.map((item, cueIndex) => {
-    const rawStart = Math.max(0, Number(item.offset) || 0);
-    const rawDuration = Math.max(0, Number(item.duration) || 0);
-    const tStart = offsetUnit === "ms" ? rawStart / 1000 : rawStart;
-    const duration = offsetUnit === "ms" ? rawDuration / 1000 : rawDuration;
-    return {
-      cueIndex,
-      tStart,
-      tEnd: tStart + (duration > 0 ? duration : 2),
-      text: item.text.replace(/\s+/g, " ").trim(),
-    };
-  }).filter((cue) => cue.text.length > 0);
+  const cues: VttCue[] = items
+    .map((item, cueIndex) => {
+      const rawStart = Math.max(0, Number(item.offset) || 0);
+      const rawDuration = Math.max(0, Number(item.duration) || 0);
+      const tStart = offsetUnit === "ms" ? rawStart / 1000 : rawStart;
+      const duration = offsetUnit === "ms" ? rawDuration / 1000 : rawDuration;
+      return {
+        cueIndex,
+        tStart,
+        tEnd: tStart + (duration > 0 ? duration : 2),
+        text: item.text.replace(/\s+/g, " ").trim(),
+      };
+    })
+    .filter((cue) => cue.text.length > 0);
 
   if (cues.length === 0) {
     throw new Error("YouTube transcript contained no usable text");
   }
 
-  const title =
-    (await fetchYoutubeTitle(videoId)) ?? `YouTube ${videoId}`;
+  const title = (await fetchYoutubeTitle(videoId)) ?? `YouTube ${videoId}`;
 
   return {
     videoId,

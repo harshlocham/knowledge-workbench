@@ -24,14 +24,16 @@ bun run dev
 
 App: [http://localhost:3000](http://localhost:3000).
 
-## Deploy on VPS (app + Caddy + Qdrant)
+## Deploy on VPS (app + Caddy)
 
-The VPS runs **app**, **Caddy** (HTTPS), and **Qdrant** on the same Docker network so vector upserts stay local (fast). Postgres stays **external** (Neon/Supabase/etc). The app is not published on the host — only Caddy exposes `80` / `443`. Qdrant is not exposed publicly.
+Postgres and Qdrant stay **external** (Neon/Supabase + Qdrant Cloud). The VPS runs the **app** and **Caddy** (HTTPS). Only Caddy exposes `80` / `443`.
 
-### 1. Prepare managed Postgres + storage
+### 1. Prepare managed services
 
-- Create a Postgres database and copy its connection string → `DATABASE_URL`
-- Prefer **S3 or Cloudflare R2** for uploads (`S3_*`) so files survive container rebuilds
+- Create a Postgres database → `DATABASE_URL`
+- Create a **Qdrant Cloud** cluster (prefer a region near your VPS) → `QDRANT_URL` + `QDRANT_API_KEY`
+  - Use `https://….aws.cloud.qdrant.io` **without** `:6333` (the app forces HTTPS port 443)
+- Prefer **S3 or Cloudflare R2** for uploads (`S3_*`)
 - Point your domain’s **A/AAAA** records at the VPS
 
 ### 2. On the VPS
@@ -39,16 +41,15 @@ The VPS runs **app**, **Caddy** (HTTPS), and **Qdrant** on the same Docker netwo
 ```bash
 git clone <your-repo> && cd knowledge-workbench
 cp .env.example .env
-# Set DOMAIN, Clerk, OPENAI_API_KEY, DATABASE_URL
-# QDRANT_URL is overridden by compose to http://qdrant:6333 — leave Cloud blank
+# Set DOMAIN, Clerk, OPENAI_API_KEY, DATABASE_URL, QDRANT_URL, QDRANT_API_KEY
 
-# Open firewall: 80 and 443 (not 3000 / not 6333)
+# Open firewall: 80 and 443 (not 3000)
 docker compose -f docker-compose.prod.yml up --build -d
 ```
 
 Migrations run automatically on app container start. Caddy issues a Let’s Encrypt cert for `DOMAIN`.
 
-**Migrating off Qdrant Cloud:** after deploy, re-index each source (or remove and re-add). Vectors do not copy from Cloud automatically.
+**YouTube on a VPS:** caption fetch often fails from datacenter IPs. Upload a `.vtt`, or set `YOUTUBE_PROXY_URL` to a residential HTTP proxy.
 
 ```bash
 docker compose -f docker-compose.prod.yml logs -f
@@ -88,8 +89,9 @@ Full diagrams: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 | `DOMAIN` | Caddy site address (auto HTTPS via Let’s Encrypt) |
 | `VITE_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` | Required; publishable key is baked at **image build** time |
 | `DATABASE_URL` | External Postgres |
-| `QDRANT_URL` / `QDRANT_API_KEY` | Local: `http://127.0.0.1:6333`. Prod compose forces `http://qdrant:6333` and clears the API key |
+| `QDRANT_URL` / `QDRANT_API_KEY` | Qdrant Cloud HTTPS URL (no `:6333`) + API key |
 | `OPENAI_API_KEY` | Required |
+| `YOUTUBE_PROXY_URL` | Optional residential proxy for YouTube captions on VPS |
 | `S3_*` | Recommended on VPS instead of local disk |
 
 ## License

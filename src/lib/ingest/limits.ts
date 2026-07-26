@@ -43,6 +43,9 @@ export function friendlyIngestError(error: unknown, fallback: string) {
 	if (lower.includes("youtube") && lower.includes("rate-limited")) {
 		return message;
 	}
+	if (lower.includes("blocked caption") || lower.includes("youtube_proxy")) {
+		return message;
+	}
 	if (lower.includes("rate limit") || lower.includes("429")) {
 		return "OpenAI rate limit hit while indexing. Wait a moment and re-index.";
 	}
