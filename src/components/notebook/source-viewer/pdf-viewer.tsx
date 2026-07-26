@@ -37,12 +37,15 @@ export function PdfViewer({
   highlight,
   animateKey,
   hasFile,
+  showCitedText = true,
 }: {
   sourceId: string;
   pages: ViewerPage[] | null | undefined;
   highlight: ViewerHighlight | null;
   animateKey?: string;
   hasFile?: boolean;
+  /** When false (focus stage), cited passage lives in the side panel instead. */
+  showCitedText?: boolean;
 }) {
   const getSourceFileFn = useServerFn(getSourceFile);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -261,29 +264,31 @@ export function PdfViewer({
         )}
       </div>
 
-      <div className="max-h-[32%] overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-3">
-        <p className="mb-2 text-xs font-medium tracking-wide text-[var(--kicker)] uppercase">
-          Cited text
-        </p>
-        <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--sea-ink)]">
-          <HighlightedText
-            content={highlight?.content || pageText}
-            highlight={
-              highlight
-                ? {
-                    ...highlight,
-                    locator: {
-                      ...highlight.locator,
-                      startOffset: 0,
-                      endOffset: (highlight.content || pageText).length,
-                    },
-                  }
-                : null
-            }
-            animateKey={animateKey}
-          />
-        </pre>
-      </div>
+      {showCitedText ? (
+        <div className="max-h-[32%] overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-3">
+          <p className="mb-2 text-xs font-medium tracking-wide text-[var(--kicker)] uppercase">
+            Cited text
+          </p>
+          <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--sea-ink)]">
+            <HighlightedText
+              content={highlight?.content || pageText}
+              highlight={
+                highlight
+                  ? {
+                      ...highlight,
+                      locator: {
+                        ...highlight.locator,
+                        startOffset: 0,
+                        endOffset: (highlight.content || pageText).length,
+                      },
+                    }
+                  : null
+              }
+              animateKey={animateKey}
+            />
+          </pre>
+        </div>
+      ) : null}
     </div>
   );
 }

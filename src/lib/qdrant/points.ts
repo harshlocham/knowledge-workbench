@@ -50,6 +50,18 @@ export async function deletePointsBySourceId(sourceId: string) {
   });
 }
 
+export async function deletePointsByNotebookId(notebookId: string) {
+  await ensureKnowledgeChunksCollection();
+  const qdrant = getQdrantClient();
+
+  await qdrant.delete(KNOWLEDGE_CHUNKS_COLLECTION, {
+    wait: true,
+    filter: {
+      must: [{ key: "notebookId", match: { value: notebookId } }],
+    },
+  });
+}
+
 export async function searchNotebookChunks(options: {
   notebookId: string;
   ownerId: string;

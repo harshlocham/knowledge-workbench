@@ -386,7 +386,7 @@ Configured in `src/lib/ingest/limits.ts` (examples):
 
 - 50 sources per notebook
 - Rate limits on create (e.g. 20 creates / 10 min)
-- Text ~200k chars; PDF ~20MB; VTT ~10MB
+- Text ~200k chars; PDF ~30MB; VTT ~10MB
 
 ---
 

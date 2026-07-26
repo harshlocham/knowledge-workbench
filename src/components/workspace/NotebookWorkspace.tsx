@@ -22,6 +22,7 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "#/components/ui/sheet.tsx";
+import { AddSourceSheet } from "#/components/workspace/AddSourceSheet.tsx";
 import { ChatPanel } from "#/components/workspace/ChatPanel.tsx";
 import { EditableNotebookTitle } from "#/components/workspace/EditableNotebookTitle.tsx";
 import { KnowledgeToolsPanel } from "#/components/workspace/KnowledgeToolsPanel.tsx";
@@ -167,11 +168,23 @@ export function NotebookWorkspace({
 		setMessages(initialMessages);
 	}, [initialMessages]);
 
-	useEffect(() => {
-		if (sources.length === 0) {
-			setAddSourcesOpen(true);
+	function openAddSources() {
+		setSourceError(null);
+		setAddSourcesOpen(true);
+		layout.setLeftCollapsed(false);
+		const isMobileViewport =
+			typeof window !== "undefined" &&
+			window.matchMedia("(max-width: 1023px)").matches;
+		if (isMobileViewport) {
+			setMobileSourcesOpen(true);
 		}
-	}, [sources.length]);
+	}
+
+	useEffect(() => {
+		if (sources.length !== 0) return;
+		setAddSourcesOpen(true);
+		layout.setLeftCollapsed(false);
+	}, [sources.length, layout.setLeftCollapsed]);
 
 	useEffect(() => {
 		if (titleSyncInFlightRef.current) {
@@ -638,21 +651,16 @@ export function NotebookWorkspace({
 		onOpenClip: (c: MessageCitation) => void openRoadmapClip(c),
 	};
 
-	const sourcesSidebar = (
-		<SourcesSidebar
-			sources={sources}
-			selectedSourceId={viewer?.id}
-			busySourceId={busySourceId}
-			sourceError={sourceError}
-			isAddingSource={isAddingSource}
-			onOpenSource={(id) => void openSource(id)}
-			onReindex={(id) => void handleReindex(id)}
-			onDelete={(id) => void handleDeleteSource(id)}
-			onAddSource={handleAddSource}
-			addOpen={addSourcesOpen}
-			onAddOpenChange={setAddSourcesOpen}
-		/>
-	);
+	const sourcesSidebarProps = {
+		sources,
+		selectedSourceId: viewer?.id,
+		busySourceId,
+		sourceError,
+		onOpenSource: (id: string) => void openSource(id),
+		onReindex: (id: string) => void handleReindex(id),
+		onDelete: (id: string) => void handleDeleteSource(id),
+		onAddClick: openAddSources,
+	};
 
 	return (
 		<div className="flex h-dvh min-h-0 flex-col bg-[var(--workspace-bg)]">
@@ -686,103 +694,97 @@ export function NotebookWorkspace({
 				}
 			/>
 
-      <div className="flex items-center gap-2 border-b border-border bg-card px-4 py-2 sm:gap-3 sm:px-6">
-        <Breadcrumbs items={breadcrumbItems} className="shrink-0" />
-        <span className="text-muted-foreground" aria-hidden>
-          /
-        </span>
-        <EditableNotebookTitle
-          title={notebookState.title}
-          onSave={handleRename}
-          className="min-w-0 flex-1 text-sm"
-        />
-        {viewer ? (
-          <>
-            <span className="hidden text-muted-foreground sm:inline" aria-hidden>
-              /
-            </span>
-            <span className="hidden min-w-0 truncate text-sm text-muted-foreground sm:inline">
-              {viewer.title}
-            </span>
-          </>
-        ) : null}
-        <p className="hidden shrink-0 text-xs text-muted-foreground md:block">
-          {readyCount} ready
-        </p>
-      </div>
+			<div className="flex items-center gap-2 border-b border-border bg-card px-4 py-2 sm:gap-3 sm:px-6">
+				<Breadcrumbs items={breadcrumbItems} className="shrink-0" />
+				<span className="text-muted-foreground" aria-hidden>
+					/
+				</span>
+				<EditableNotebookTitle
+					title={notebookState.title}
+					onSave={handleRename}
+					className="min-w-0 flex-1 text-sm"
+				/>
+				{viewer ? (
+					<>
+						<span
+							className="hidden text-muted-foreground sm:inline"
+							aria-hidden
+						>
+							/
+						</span>
+						<span className="hidden min-w-0 truncate text-sm text-muted-foreground sm:inline">
+							{viewer.title}
+						</span>
+					</>
+				) : null}
+				<p className="hidden shrink-0 text-xs text-muted-foreground md:block">
+					{readyCount} ready
+				</p>
+			</div>
 
 			<div className="flex min-h-0 flex-1">
-				{sourceExpanded &&
-				viewer?.videoId &&
-				(viewer.type === "youtube" || viewer.type === "vtt") ? (
+				{sourceExpanded && (viewer || viewerLoading) ? (
 					<section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--workspace-bg)]">
-						<div className="flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-2.5">
-							<div className="min-w-0">
-								<p className="truncate text-sm font-semibold text-foreground">
-									{viewer.title}
-								</p>
-								<p className="truncate text-xs text-muted-foreground">
-									Video across left + center · transcript on the right
-								</p>
-							</div>
-							<div className="flex shrink-0 items-center gap-1">
-								<Button
-									type="button"
-									variant="outline"
-									size="xs"
-									onClick={() => setSourceExpanded(false)}
-								>
-									Dock
-								</Button>
-								<Button
-									type="button"
-									variant="ghost"
-									size="icon-sm"
-									aria-label="Close focused video"
-									onClick={() => {
-										setViewer(null);
-										setCitationNav([]);
-										setActiveCitationKey(null);
-										setSourceExpanded(false);
-										playbackResumeRef.current = { seconds: 0, playing: false };
-										setPlayback({ seconds: 0, playing: false });
-										setSeekCommand(null);
-									}}
-								>
-									<X />
-								</Button>
-							</div>
-						</div>
-						<div className="flex min-h-0 flex-1 items-center justify-center p-4 sm:p-8">
-							<YoutubePlayerStage
-								videoId={viewer.videoId}
-								resumeAt={playbackResumeRef.current.seconds}
-								resumePlaying={playbackResumeRef.current.playing}
-								seekCommand={seekCommand}
-								onPlaybackSync={(seconds, playing) => {
-									playbackResumeRef.current = { seconds, playing };
-									setPlayback({ seconds, playing });
-								}}
-								framed
-								className="w-full max-w-6xl shadow-lg"
-							/>
-						</div>
-					</section>
-				) : (
-					<>
-						<ResizablePanel
-							side="left"
-							label="Sources"
-							width={layout.leftWidth}
-							collapsed={layout.leftCollapsed}
-							onWidthChange={layout.setLeftWidth}
-							onCollapsedChange={layout.setLeftCollapsed}
-						>
-							{sourcesSidebar}
-						</ResizablePanel>
-
-						{sourceExpanded && (viewer || viewerLoading) ? (
-							<section className="flex min-h-0 min-w-0 flex-1 flex-col border-x border-border bg-card">
+						{viewer?.videoId &&
+						(viewer.type === "youtube" || viewer.type === "vtt") ? (
+							<>
+								<div className="flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-2.5">
+									<div className="min-w-0">
+										<p className="truncate text-sm font-semibold text-foreground">
+											{viewer.title}
+										</p>
+										<p className="truncate text-xs text-muted-foreground">
+											Video across left + center · transcript on the right
+										</p>
+									</div>
+									<div className="flex shrink-0 items-center gap-1">
+										<Button
+											type="button"
+											variant="outline"
+											size="xs"
+											onClick={() => setSourceExpanded(false)}
+										>
+											Dock
+										</Button>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon-sm"
+											aria-label="Close focused video"
+											onClick={() => {
+												setViewer(null);
+												setCitationNav([]);
+												setActiveCitationKey(null);
+												setSourceExpanded(false);
+												playbackResumeRef.current = {
+													seconds: 0,
+													playing: false,
+												};
+												setPlayback({ seconds: 0, playing: false });
+												setSeekCommand(null);
+											}}
+										>
+											<X />
+										</Button>
+									</div>
+								</div>
+								<div className="flex min-h-0 flex-1 items-center justify-center p-4 sm:p-8">
+									<YoutubePlayerStage
+										videoId={viewer.videoId}
+										resumeAt={playbackResumeRef.current.seconds}
+										resumePlaying={playbackResumeRef.current.playing}
+										seekCommand={seekCommand}
+										onPlaybackSync={(seconds, playing) => {
+											playbackResumeRef.current = { seconds, playing };
+											setPlayback({ seconds, playing });
+										}}
+										framed
+										className="w-full max-w-6xl shadow-lg"
+									/>
+								</div>
+							</>
+						) : (
+							<div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-border bg-card">
 								<SourceViewerPanel
 									source={viewer}
 									loading={viewerLoading}
@@ -804,29 +806,42 @@ export function NotebookWorkspace({
 										setPlayback({ seconds, playing });
 									}}
 								/>
-							</section>
-						) : (
-							<ChatPanel
-								messages={messages}
-								isAsking={isAsking}
-								question={question}
-								onQuestionChange={setQuestion}
-								onAsk={() => void runAsk(question)}
-								onRegenerate={handleRegenerate}
-								chatError={chatError}
-								readyCount={readyCount}
-								sourceCount={sources.length}
-								onAddSources={() => setAddSourcesOpen(true)}
-								activeCitationKey={activeCitationKey}
-								onCitationClick={(citation, messageId) =>
-									void openCitation(citation, messageId)
-								}
-								onFollowUpAsk={(followUp) => {
-									setQuestion(followUp);
-									void runAsk(followUp);
-								}}
-							/>
+							</div>
 						)}
+					</section>
+				) : (
+					<>
+						<ResizablePanel
+							side="left"
+							label="Sources"
+							width={layout.leftWidth}
+							collapsed={layout.leftCollapsed}
+							onWidthChange={layout.setLeftWidth}
+							onCollapsedChange={layout.setLeftCollapsed}
+						>
+							<SourcesSidebar {...sourcesSidebarProps} />
+						</ResizablePanel>
+
+						<ChatPanel
+							messages={messages}
+							isAsking={isAsking}
+							question={question}
+							onQuestionChange={setQuestion}
+							onAsk={() => void runAsk(question)}
+							onRegenerate={handleRegenerate}
+							chatError={chatError}
+							readyCount={readyCount}
+							sourceCount={sources.length}
+							onAddSources={openAddSources}
+							activeCitationKey={activeCitationKey}
+							onCitationClick={(citation, messageId) =>
+								void openCitation(citation, messageId)
+							}
+							onFollowUpAsk={(followUp) => {
+								setQuestion(followUp);
+								void runAsk(followUp);
+							}}
+						/>
 					</>
 				)}
 
@@ -847,7 +862,7 @@ export function NotebookWorkspace({
 					<SheetHeader className="sr-only">
 						<SheetTitle>Sources</SheetTitle>
 					</SheetHeader>
-					{sourcesSidebar}
+					<SourcesSidebar {...sourcesSidebarProps} />
 				</SheetContent>
 			</Sheet>
 
@@ -859,6 +874,18 @@ export function NotebookWorkspace({
 					<KnowledgeToolsPanel {...toolsProps} />
 				</SheetContent>
 			</Sheet>
+
+			<AddSourceSheet
+				open={addSourcesOpen}
+				onOpenChange={setAddSourcesOpen}
+				onSubmit={async (payload) => {
+					await handleAddSource(payload);
+					setAddSourcesOpen(false);
+					setMobileSourcesOpen(false);
+				}}
+				isAdding={isAddingSource}
+				error={sourceError}
+			/>
 		</div>
 	);
 }

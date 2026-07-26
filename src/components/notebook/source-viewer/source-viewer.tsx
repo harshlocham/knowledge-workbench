@@ -224,8 +224,8 @@ export function SourceViewer({
 							size="xs"
 							aria-label={
 								expanded
-									? "Return video to the source panel"
-									: "Open video in the main workspace"
+									? "Return source to the side panel"
+									: "Open source in the main workspace"
 							}
 							onClick={onToggleExpanded}
 						>
@@ -284,6 +284,7 @@ export function SourceViewer({
 						highlight={source.highlight}
 						animateKey={animateKey}
 						hasFile={source.hasFile}
+						showCitedText={!expanded}
 					/>
 				) : source.type === "url" ? (
 					<WebsiteViewer

@@ -5,7 +5,10 @@ import { z } from "zod";
 
 import { db } from "#/db/index.ts";
 import { notebooks } from "#/db/schema/notebooks.ts";
+import { sources } from "#/db/schema/sources.ts";
 import { getOptionalUserId, requireUserId } from "#/lib/auth.server.ts";
+import { deletePointsByNotebookId } from "#/lib/qdrant/points.ts";
+import { deleteSourceFile } from "#/lib/storage/files.server.ts";
 
 export type NotebookDTO = {
   id: string;
@@ -134,9 +137,40 @@ export const deleteNotebook = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const userId = await requireUserId();
 
+    const [owned] = await db
+      .select({ id: notebooks.id })
+      .from(notebooks)
+      .where(and(eq(notebooks.id, data.id), eq(notebooks.ownerId, userId)))
+      .limit(1);
+
+    if (!owned) {
+      throw notFound();
+    }
+
+    const notebookSources = await db
+      .select({
+        id: sources.id,
+        storageUri: sources.storageUri,
+      })
+      .from(sources)
+      .where(eq(sources.notebookId, owned.id));
+
+    await Promise.all(
+      notebookSources.map((source) => deleteSourceFile(source.storageUri)),
+    );
+
+    try {
+      await deletePointsByNotebookId(owned.id);
+    } catch (error) {
+      console.error(
+        `[deleteNotebook] failed to clear Qdrant points for ${owned.id}`,
+        error,
+      );
+    }
+
     const [row] = await db
       .delete(notebooks)
-      .where(and(eq(notebooks.id, data.id), eq(notebooks.ownerId, userId)))
+      .where(and(eq(notebooks.id, owned.id), eq(notebooks.ownerId, userId)))
       .returning({ id: notebooks.id });
 
     if (!row) {
