@@ -53,7 +53,7 @@ export function friendlyIngestError(error: unknown, fallback: string) {
 		return "OpenAI API key is missing or invalid. Check OPENAI_API_KEY.";
 	}
 	if (lower.includes("qdrant")) {
-		return "Vector store unavailable. Is Qdrant running?";
+		return "Vector store unavailable. Check QDRANT_URL / API key, then re-index.";
 	}
 	if (lower.includes("captions") || lower.includes("transcript")) {
 		return message;

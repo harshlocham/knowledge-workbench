@@ -235,34 +235,48 @@ On Qdrant failure after Postgres insert, `clearSourceIndex` rolls back vectors a
 
 ### Retrieve → generate (Q&A)
 
-`askNotebook` in `src/features/chat/chat.functions.ts`:
+Primary UX path: `POST /api/notebooks/$notebookId/ask` (SSE) → `runNotebookAsk` in `src/features/chat/ask-notebook.server.ts`.  
+`askNotebook` server function remains as a non-streaming wrapper.
 
 ```mermaid
 sequenceDiagram
-  participant UI as ChatComposer
-  participant SF as askNotebook
-  participant Emb as embedTexts
-  participant Q as searchNotebookChunks
-  participant LLM as generateGroundedAnswer
+  participant UI as ChatPanel
+  participant SSE as ask SSE route
+  participant Ask as runNotebookAsk
+  participant Hy as hybrid retrieve
+  participant LLM as generateGroundedAnswerStream
   participant DB as Postgres
 
-  UI->>SF: notebookId, question
-  SF->>DB: INSERT user message
-  SF->>Emb: query vector
-  SF->>Q: top-6 by notebookId + ownerId
-  SF->>LLM: grounded answer + citedIndexes
-  SF->>DB: INSERT assistant + citations
-  SF-->>UI: userMessage, assistantMessage
+  UI->>SSE: question
+  SSE->>Ask: onPhase + onToken
+  Ask->>DB: INSERT user message
+  Ask->>Hy: rewrite → dense+lexical → RRF → diversify → rerank
+  Hy-->>SSE: phase events
+  Ask->>LLM: stream tokens
+  LLM-->>SSE: token events
+  Ask->>DB: INSERT assistant + citations
+  SSE-->>UI: done userMessage + assistantMessage
 ```
+
+Retrieval stack (`src/lib/rag/hybrid-retrieve.server.ts`):
+
+1. Query rewrite (+ chat history for follow-ups)
+2. Multi-query dense search (Qdrant) + Postgres FTS (`chunks.search_vector` GIN)
+3. Reciprocal Rank Fusion
+4. Time diversify (YouTube/VTT)
+5. LLM rerank shortlist
 
 Defaults:
 
 - Embedding: `text-embedding-3-small` (1536 dims)
 - Chat: `gpt-4o-mini`
-- Retrieval limit: 6 chunks
+- Final context: 8 chunks after diversify + rerank
 - Qdrant: Cosine similarity; payload indexes on `notebookId`, `sourceId`, `ownerId`
+- FTS: generated `search_vector` column (see `drizzle/0001_chunks_search_vector.sql`)
 
-After indexing, `tryPostSourceAddedSummaryMessage` posts a NotebookLM-style “I've added …” briefing into chat before status becomes `ready`.
+Eval: `bun run eval:rag -- --notebook <uuid>` (`scripts/eval-rag.ts`).
+
+After indexing, `tryPostSourceAddedSummaryMessage` posts a source overview into chat before status becomes `ready`.
 
 ### Learning roadmap
 
@@ -318,7 +332,7 @@ which polls source status (~1s) until nothing is pending, then refreshes message
 |--------|------|-----------|
 | Notebooks | `notebooks.functions.ts` | `listNotebooks`, `getNotebook`, `createNotebook`, `updateNotebook`, `deleteNotebook`, `getAuthSession` |
 | Sources | `sources.functions.ts` | `listSources`, `create*Source`, `reindexSource`, `deleteSource`, `getSourceFile` |
-| Chat | `chat.functions.ts` | `listMessages`, `askNotebook`, `getSourceViewer` |
+| Chat | `chat.functions.ts` + `ask-notebook.server.ts` | `listMessages`, `askNotebook`, SSE `ask` route, `getSourceViewer` |
 | Roadmap | `roadmap.functions.ts` | `buildLearningRoadmap` |
 
 ---

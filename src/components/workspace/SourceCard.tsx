@@ -116,7 +116,7 @@ export function SourceCard({
             <DropdownMenuItem onClick={onOpen}>Open</DropdownMenuItem>
             <DropdownMenuItem disabled={busy || pending} onClick={onReindex}>
               <RefreshCw />
-              Re-index
+              Re-index for better answers
             </DropdownMenuItem>
             <DropdownMenuItem
               variant="destructive"

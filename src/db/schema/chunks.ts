@@ -12,6 +12,12 @@ import {
 import { notebooks } from "./notebooks.ts";
 import { sources } from "./sources.ts";
 
+/**
+ * Chunk text + locators (embeddings live in Qdrant).
+ * Full-text: `search_vector` is a GENERATED tsvector from
+ * `drizzle/0001_chunks_search_vector.sql` (not Drizzle-owned — avoid `db:push` dropping it).
+ */
+
 /** Locator used by the source viewer + citations (no embeddings — those live in Qdrant). */
 export type ChunkLocator = {
   page?: number;

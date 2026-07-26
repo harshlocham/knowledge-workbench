@@ -52,6 +52,8 @@ export function fuseHitsByRrf(
     .map(({ hit, score }) => ({ ...hit, score }));
 }
 
+export type RetrievalPhase = "rewriting" | "searching" | "reranking";
+
 /**
  * Rewrite → multi-query dense + lexical → RRF → time diversify → rerank.
  */
@@ -63,6 +65,7 @@ export async function retrieveHybridNotebookChunks(options: {
   historySummary?: string;
   finalLimit?: number;
   minGapSeconds?: number;
+  onPhase?: (phase: RetrievalPhase) => void;
 }): Promise<{
   hits: ScoredChunkHit[];
   rewritten: Awaited<ReturnType<typeof rewriteRetrievalQuery>>;
@@ -70,6 +73,7 @@ export async function retrieveHybridNotebookChunks(options: {
   const finalLimit = options.finalLimit ?? DEFAULT_FINAL_LIMIT;
   const minGapSeconds = options.minGapSeconds ?? DEFAULT_MIN_GAP_SECONDS;
 
+  options.onPhase?.("rewriting");
   const rewritten = await rewriteRetrievalQuery(options.question, {
     historySummary: options.historySummary,
   });
@@ -80,6 +84,7 @@ export async function retrieveHybridNotebookChunks(options: {
       : [options.question]
   ).slice(0, MAX_EMBED_QUERIES);
 
+  options.onPhase?.("searching");
   const vectors = await embedTexts(embeddingQueries);
 
   const [denseLists, lexicalHits] = await Promise.all([
@@ -112,6 +117,7 @@ export async function retrieveHybridNotebookChunks(options: {
     minGapSeconds,
   });
 
+  options.onPhase?.("reranking");
   const hits = await rerankHitsForQuestion({
     question: options.question,
     hits: diversified,

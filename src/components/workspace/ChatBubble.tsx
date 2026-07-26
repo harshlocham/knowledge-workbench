@@ -288,13 +288,15 @@ export function ChatBubble({
 	);
 }
 
-export function TypingIndicator() {
+export function TypingIndicator({ label }: { label?: string }) {
 	return (
-		<div className="mr-auto inline-flex items-center gap-1.5 rounded-2xl border border-border bg-card px-4 py-3 shadow-[var(--shadow-soft)]">
-			<span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
-			<span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
-			<span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
-			<span className="sr-only">Generating answer</span>
+		<div className="mr-auto inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-soft)]">
+			<span className="inline-flex items-center gap-1.5">
+				<span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
+				<span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
+				<span className="typing-dot size-1.5 rounded-full bg-muted-foreground" />
+			</span>
+			<span>{label?.trim() || "Generating answer…"}</span>
 		</div>
 	);
 }

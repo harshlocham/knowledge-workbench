@@ -65,6 +65,7 @@ In Clerk, add `https://your.domain.com` to allowed origins / redirect URLs.
 | `bun run dev` | Dev server (port 3000) |
 | `bun run build` / `start` | Production build & run (without Docker) |
 | `bun run db:migrate` | Apply migrations (also runs in container entrypoint) |
+| `bun run eval:rag` | Run tiny RAG retrieval regression checks |
 
 ## How it works (short)
 
@@ -72,8 +73,8 @@ In Clerk, add `https://your.domain.com` to allowed origins / redirect URLs.
 flowchart LR
   Sources[Add sources] --> Index[Extract → chunk → embed]
   Index --> Store[(Postgres + Qdrant)]
-  Ask[Ask question] --> Retrieve[Vector search]
-  Retrieve --> Answer[Grounded answer + citations]
+  Ask[Ask question] --> Retrieve[Hybrid retrieve + rerank]
+  Retrieve --> Answer[Streamed grounded answer + citations]
   Answer --> Viewer[Open source viewer]
 ```
 

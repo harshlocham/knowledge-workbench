@@ -30,11 +30,11 @@ import { SourcesSidebar } from "#/components/workspace/SourcesSidebar.tsx";
 import type { ToolsTab } from "#/components/workspace/ViewerTabs.tsx";
 import type { MessageCitation } from "#/db/schema/messages.ts";
 import {
-	askNotebook,
 	type ChatMessageDTO,
 	getSourceViewer,
 	listMessages,
 } from "#/features/chat/chat.functions.ts";
+import { askNotebookStream } from "#/lib/chat/ask-stream.ts";
 import {
 	type NotebookDTO,
 	updateNotebook,
@@ -97,7 +97,6 @@ export function NotebookWorkspace({
 	const deleteSourceFn = useServerFn(deleteSource);
 	const reindexSourceFn = useServerFn(reindexSource);
 	const listSourcesFn = useServerFn(listSources);
-	const askNotebookFn = useServerFn(askNotebook);
 	const listMessagesFn = useServerFn(listMessages);
 	const getSourceViewerFn = useServerFn(getSourceViewer);
 	const buildLearningRoadmapFn = useServerFn(buildLearningRoadmap);
@@ -136,6 +135,7 @@ export function NotebookWorkspace({
 
 	const [question, setQuestion] = useState("");
 	const [isAsking, setIsAsking] = useState(false);
+	const [askStatus, setAskStatus] = useState<string | null>(null);
 	const [chatError, setChatError] = useState<string | null>(null);
 
 	const [viewer, setViewer] = useState<ViewerSource | null>(null);
@@ -546,30 +546,86 @@ export function NotebookWorkspace({
 
 		setChatError(null);
 		setIsAsking(true);
+		setAskStatus("Understanding your question…");
 		setQuestion("");
 
-		const optimistic: ChatMessageDTO = {
-			id: `optimistic-${Date.now()}`,
+		const optimisticUser: ChatMessageDTO = {
+			id: `optimistic-user-${Date.now()}`,
 			notebookId: notebook.id,
 			role: "user",
 			content: trimmed,
 			citations: [],
 			createdAt: new Date().toISOString(),
 		};
-		setMessages((prev) => [...prev, optimistic]);
+		const streamingAssistantId = `optimistic-assistant-${Date.now()}`;
+		setMessages((prev) => [...prev, optimisticUser]);
 
 		try {
-			const result = await askNotebookFn({
-				data: { notebookId: notebook.id, question: trimmed },
+			const result = await askNotebookStream(notebook.id, trimmed, {
+				onPhase: (_phase, message) => {
+					setAskStatus(message);
+					// Once writing starts, show a streaming assistant bubble.
+					if (_phase === "writing") {
+						setMessages((prev) => {
+							if (prev.some((m) => m.id === streamingAssistantId)) {
+								return prev;
+							}
+							return [
+								...prev,
+								{
+									id: streamingAssistantId,
+									notebookId: notebook.id,
+									role: "assistant" as const,
+									content: "",
+									citations: [],
+									createdAt: new Date().toISOString(),
+								},
+							];
+						});
+						setAskStatus(null);
+					}
+				},
+				onToken: (token) => {
+					setAskStatus(null);
+					setMessages((prev) => {
+						const existing = prev.find((m) => m.id === streamingAssistantId);
+						if (!existing) {
+							return [
+								...prev,
+								{
+									id: streamingAssistantId,
+									notebookId: notebook.id,
+									role: "assistant" as const,
+									content: token,
+									citations: [],
+									createdAt: new Date().toISOString(),
+								},
+							];
+						}
+						return prev.map((message) =>
+							message.id === streamingAssistantId
+								? { ...message, content: message.content + token }
+								: message,
+						);
+					});
+				},
 			});
 			setMessages((prev) => [
-				...prev.filter((message) => message.id !== optimistic.id),
+				...prev.filter(
+					(message) =>
+						message.id !== optimisticUser.id &&
+						message.id !== streamingAssistantId,
+				),
 				result.userMessage,
 				result.assistantMessage,
 			]);
 		} catch (err) {
 			setMessages((prev) =>
-				prev.filter((message) => message.id !== optimistic.id),
+				prev.filter(
+					(message) =>
+						message.id !== optimisticUser.id &&
+						message.id !== streamingAssistantId,
+				),
 			);
 			setQuestion(trimmed);
 			setChatError(
@@ -577,6 +633,7 @@ export function NotebookWorkspace({
 			);
 		} finally {
 			setIsAsking(false);
+			setAskStatus(null);
 		}
 	}
 
@@ -825,6 +882,7 @@ export function NotebookWorkspace({
 						<ChatPanel
 							messages={messages}
 							isAsking={isAsking}
+							askStatus={askStatus}
 							question={question}
 							onQuestionChange={setQuestion}
 							onAsk={() => void runAsk(question)}

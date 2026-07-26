@@ -110,7 +110,7 @@ export async function clearSourceIndex(sourceId: string) {
 }
 
 /**
- * Persist prepared chunks: embed → Postgres → Qdrant → ready.
+ * Persist prepared chunks: embed → Postgres → (Qdrant ∥ overview) → ready.
  * Caller owns status=indexing and any prior clearSourceIndex.
  */
 export async function persistSourceChunks(options: {
@@ -166,26 +166,49 @@ export async function persistSourceChunks(options: {
   await setSourceIndexProgress(sourceId, {
     phase: "storing",
     percent: 85,
-    message: "Writing vectors…",
+    message: "Writing vectors & overview…",
   });
 
+  const pointInputs = inserted.map((row, index) => ({
+    id: row.qdrantPointId,
+    vector: embeddings[index]!,
+    payload: {
+      notebookId,
+      sourceId,
+      chunkId: row.id,
+      ownerId,
+      sourceType,
+      chunkIndex: row.chunkIndex,
+      // text is persisted in Postgres only — omitted from Qdrant for smaller upserts
+      text: row.content,
+      locator: row.locator,
+    },
+  }));
+
   try {
-    await upsertChunkPoints(
-      inserted.map((row, index) => ({
-        id: row.qdrantPointId,
-        vector: embeddings[index]!,
-        payload: {
-          notebookId,
-          sourceId,
-          chunkId: row.id,
-          ownerId,
-          sourceType,
-          chunkIndex: row.chunkIndex,
-          text: row.content,
-          locator: row.locator,
+    // Overview only needs Postgres chunks; overlap it with the slow Cloud upload.
+    await Promise.all([
+      upsertChunkPoints(pointInputs, {
+        onBatchProgress: async (uploaded, total) => {
+          const percent = 85 + Math.floor((uploaded / total) * 10);
+          await setSourceIndexProgress(sourceId, {
+            phase: "storing",
+            percent: Math.min(percent, 95),
+            message: `Uploading vectors ${uploaded}/${total}…`,
+          });
         },
-      })),
-    );
+      }),
+      tryPostSourceAddedSummaryMessage({
+        sourceId,
+        notebookId,
+        sourceType,
+        chunkRows: inserted.map((row) => ({
+          id: row.id,
+          content: row.content,
+          locator: row.locator,
+        })),
+      }),
+    ]);
   } catch (error) {
     // Qdrant failed after Postgres insert — remove partial rows/vectors
     await clearSourceIndex(sourceId);
@@ -194,27 +217,8 @@ export async function persistSourceChunks(options: {
 
   await setSourceIndexProgress(sourceId, {
     phase: "finalizing",
-    percent: 95,
-    message: "Finishing up…",
-  });
-
-  await setSourceIndexProgress(sourceId, {
-    phase: "finalizing",
     percent: 98,
-    message: "Writing source overview…",
-  });
-
-  // Stay in "indexing" until the overview message is posted so SSE doesn't
-  // close before the NotebookLM-style summary appears in chat.
-  await tryPostSourceAddedSummaryMessage({
-    sourceId,
-    notebookId,
-    sourceType,
-    chunkRows: inserted.map((row) => ({
-      id: row.id,
-      content: row.content,
-      locator: row.locator,
-    })),
+    message: "Finishing up…",
   });
 
   const [current] = await db

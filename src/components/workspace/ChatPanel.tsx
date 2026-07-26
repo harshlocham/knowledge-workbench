@@ -14,6 +14,7 @@ import type { ChatMessageDTO } from "#/features/chat/chat.functions.ts";
 export function ChatPanel({
 	messages,
 	isAsking,
+	askStatus,
 	question,
 	onQuestionChange,
 	onAsk,
@@ -28,6 +29,8 @@ export function ChatPanel({
 }: {
 	messages: ChatMessageDTO[];
 	isAsking: boolean;
+	/** Live status while retrieval / generation runs. */
+	askStatus?: string | null;
 	question: string;
 	onQuestionChange: (value: string) => void;
 	onAsk: () => void;
@@ -47,7 +50,7 @@ export function ChatPanel({
 		if (!list) return;
 		// Scroll only the chat list — scrollIntoView can jump the whole page.
 		list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
-	}, [messages, isAsking]);
+	}, [messages, isAsking, askStatus]);
 
 	const lastAssistantId = [...messages]
 		.reverse()
@@ -97,7 +100,9 @@ export function ChatPanel({
 								isLastAssistant={message.id === lastAssistantId}
 							/>
 						))}
-						{isAsking ? <TypingIndicator /> : null}
+						{isAsking && askStatus ? (
+							<TypingIndicator label={askStatus} />
+						) : null}
 					</div>
 				)}
 			</div>
