@@ -37,6 +37,8 @@ export type RetrievedContext = {
 export async function generateGroundedAnswer(options: {
 	question: string;
 	contexts: RetrievedContext[];
+	/** Recent chat turns for follow-up resolution (not a substitute for sources). */
+	historySummary?: string;
 }) {
 	const { question, contexts } = options;
 
@@ -61,6 +63,10 @@ export async function generateGroundedAnswer(options: {
 		})
 		.join("\n\n");
 
+	const historyBlock = options.historySummary?.trim()
+		? `\nRecent chat (use only to resolve follow-ups; facts must still come from Sources):\n${options.historySummary.trim()}\n`
+		: "";
+
 	const client = getOpenAIClient();
 	const completion = await client.chat.completions.create({
 		model: getChatModel(),
@@ -71,6 +77,7 @@ export async function generateGroundedAnswer(options: {
 				content: `You are a notebook research assistant (like NotebookLM). Answer using ONLY the numbered sources provided.
 Rules:
 - Every factual claim must include a citation like [1] or [2] matching a source number.
+- Only cite sources you actually used; do not dump unused source numbers.
 - If the sources do not contain the answer, say so clearly and do not invent facts.
 - Prefer concise, well-structured answers (labeled bullets when listing multiple points).
 - For timed video/transcript sources, prefer clips that answer the asked phase/event. Do not treat intro teasers or unrelated journey segments as the main answer when later on-topic clips are present.
@@ -78,7 +85,7 @@ Rules:
 			},
 			{
 				role: "user",
-				content: `Sources:\n\n${contextBlock}\n\nQuestion: ${question}`,
+				content: `${historyBlock}Sources:\n\n${contextBlock}\n\nQuestion: ${question}`,
 			},
 		],
 	});

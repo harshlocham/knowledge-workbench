@@ -1,13 +1,12 @@
-import { chunkPlainText, type TextChunk } from "#/lib/rag/chunk.ts";
+import type { TextChunk } from "#/lib/rag/chunk.ts";
 import type { VttCue } from "#/lib/rag/parse-vtt.server.ts";
 
-type CueSpan = {
-  cueIndex: number;
-  tStart: number;
-  tEnd: number;
-  startOffset: number;
-  endOffset: number;
-};
+/** Target scene length for timed transcripts. */
+const TARGET_WINDOW_SECONDS = 75;
+/** Hard cap so embeddings stay focused. */
+const MAX_CHUNK_CHARS = 900;
+/** Split when narration pauses longer than this. */
+const GAP_SPLIT_SECONDS = 12;
 
 /** Compact clock for embed/prompt labels (drop millis). */
 export function formatChunkClock(totalSeconds: number): string {
@@ -23,12 +22,65 @@ export function formatChunkClock(totalSeconds: number): string {
   return `${minutes}:${ss}`;
 }
 
+function flushGroup(groups: VttCue[][], current: VttCue[]) {
+  if (current.length > 0) {
+    groups.push(current);
+  }
+}
+
 /**
- * Join cues into plain text, run the shared chunker, then map each chunk
- * back onto overlapping cue timings (tStart / tEnd / cueIndexes).
- * Timed chunks get a `[start–end]` prefix so embeddings + RAG see when
- * the clip happens (plainText stays unprefixed for source metadata).
- * Optional videoId is attached for YouTube deep-links.
+ * Group cues into scene-like windows using pause gaps, duration, and size.
+ */
+export function groupVttCuesByScene(
+  cues: VttCue[],
+  options?: {
+    targetWindowSeconds?: number;
+    maxChars?: number;
+    gapSplitSeconds?: number;
+  },
+): VttCue[][] {
+  const targetWindowSeconds =
+    options?.targetWindowSeconds ?? TARGET_WINDOW_SECONDS;
+  const maxChars = options?.maxChars ?? MAX_CHUNK_CHARS;
+  const gapSplitSeconds = options?.gapSplitSeconds ?? GAP_SPLIT_SECONDS;
+
+  const groups: VttCue[][] = [];
+  let current: VttCue[] = [];
+  let groupStart = 0;
+  let groupChars = 0;
+
+  for (const cue of cues) {
+    const textLen = cue.text.trim().length;
+    if (textLen === 0) continue;
+
+    const prev = current.at(-1);
+    const shouldSplit =
+      current.length > 0 &&
+      ((prev && cue.tStart - prev.tEnd >= gapSplitSeconds) ||
+        cue.tStart - groupStart >= targetWindowSeconds ||
+        groupChars + textLen + 1 > maxChars);
+
+    if (shouldSplit) {
+      flushGroup(groups, current);
+      current = [];
+      groupChars = 0;
+    }
+
+    if (current.length === 0) {
+      groupStart = cue.tStart;
+    }
+
+    current.push(cue);
+    groupChars += textLen + (current.length > 1 ? 1 : 0);
+  }
+
+  flushGroup(groups, current);
+  return groups;
+}
+
+/**
+ * Scene-aware VTT/YouTube chunking with `[start–end]` prefixes for embeddings.
+ * plainText stays unprefixed for source metadata / full transcript storage.
  */
 export function chunkVttCues(
   cues: VttCue[],
@@ -37,56 +89,37 @@ export function chunkVttCues(
   plainText: string;
   chunks: TextChunk[];
 } {
-  const spans: CueSpan[] = [];
-  const parts: string[] = [];
+  const plainText = cues
+    .map((cue) => cue.text.trim())
+    .filter(Boolean)
+    .join("\n");
+
+  const groups = groupVttCuesByScene(cues);
+  const chunks: TextChunk[] = [];
   let cursor = 0;
 
-  for (const cue of cues) {
-    if (parts.length > 0) {
-      parts.push("\n");
-      cursor += 1;
-    }
+  groups.forEach((group, chunkIndex) => {
+    const body = group
+      .map((cue) => cue.text.trim())
+      .filter(Boolean)
+      .join("\n");
+    if (!body) return;
 
-    const startOffset = cursor;
-    parts.push(cue.text);
-    cursor += cue.text.length;
+    const tStart = group[0]!.tStart;
+    const tEnd = group.at(-1)!.tEnd;
+    const cueIndexes = group.map((cue) => cue.cueIndex);
+    const timePrefix = `[${formatChunkClock(tStart)}–${formatChunkClock(tEnd)}] `;
+    const startOffset = plainText.indexOf(body, cursor);
+    const resolvedStart = startOffset >= 0 ? startOffset : cursor;
+    const endOffset = resolvedStart + body.length;
+    cursor = endOffset;
 
-    spans.push({
-      cueIndex: cue.cueIndex,
-      tStart: cue.tStart,
-      tEnd: cue.tEnd,
-      startOffset,
-      endOffset: cursor,
-    });
-  }
-
-  const plainText = parts.join("");
-  const textChunks = chunkPlainText(plainText);
-
-  const chunks = textChunks.map((chunk) => {
-    const start = chunk.locator.startOffset ?? 0;
-    const end = chunk.locator.endOffset ?? start;
-
-    const overlapping = spans.filter(
-      (span) => span.startOffset < end && span.endOffset > start,
-    );
-
-    const timed = overlapping.length > 0 ? overlapping : spans.slice(0, 1);
-    const cueIndexes = timed.map((span) => span.cueIndex);
-    const tStart = timed[0]?.tStart;
-    const tEnd = timed.at(-1)?.tEnd;
-
-    const timePrefix =
-      typeof tStart === "number" && typeof tEnd === "number"
-        ? `[${formatChunkClock(tStart)}–${formatChunkClock(tEnd)}] `
-        : "";
-
-    return {
-      content: `${timePrefix}${chunk.content}`,
-      chunkIndex: chunk.chunkIndex,
+    chunks.push({
+      content: `${timePrefix}${body}`,
+      chunkIndex,
       locator: {
-        startOffset: chunk.locator.startOffset,
-        endOffset: chunk.locator.endOffset,
+        startOffset: resolvedStart,
+        endOffset,
         tStart,
         tEnd,
         cueIndex: cueIndexes[0],
@@ -94,7 +127,7 @@ export function chunkVttCues(
         videoId: options?.videoId,
         url: options?.url,
       },
-    } satisfies TextChunk;
+    });
   });
 
   return { plainText, chunks };

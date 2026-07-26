@@ -5,14 +5,18 @@ import {
 } from "#/lib/rag/diversify-hits.ts";
 import { embedTexts } from "#/lib/rag/embed.ts";
 import { searchNotebookChunksLexical } from "#/lib/rag/lexical-search.server.ts";
+import { rerankHitsForQuestion } from "#/lib/rag/rerank-hits.server.ts";
 import { rewriteRetrievalQuery } from "#/lib/rag/rewrite-query.server.ts";
 
-const DENSE_LIMIT_PER_QUERY = 24;
-const LEXICAL_LIMIT = 24;
+const DENSE_LIMIT_PER_QUERY = 20;
+const LEXICAL_LIMIT = 20;
 const RRF_K = 60;
-const DEFAULT_CANDIDATE_LIMIT = 40;
+const FUSED_CANDIDATE_LIMIT = 28;
+const DIVERSIFY_LIMIT = 14;
 const DEFAULT_FINAL_LIMIT = 8;
 const DEFAULT_MIN_GAP_SECONDS = 90;
+/** Keep rewrite+embed light: original + at most one paraphrase. */
+const MAX_EMBED_QUERIES = 2;
 
 /**
  * Reciprocal Rank Fusion across multiple ranked lists.
@@ -23,7 +27,7 @@ export function fuseHitsByRrf(
   options?: { k?: number; limit?: number },
 ): ScoredChunkHit[] {
   const k = options?.k ?? RRF_K;
-  const limit = options?.limit ?? DEFAULT_CANDIDATE_LIMIT;
+  const limit = options?.limit ?? FUSED_CANDIDATE_LIMIT;
   const byId = new Map<string, { hit: ScoredChunkHit; score: number }>();
 
   for (const list of lists) {
@@ -33,7 +37,6 @@ export function fuseHitsByRrf(
       const existing = byId.get(hit.chunkId);
       if (existing) {
         existing.score += contrib;
-        // Prefer denser/higher original score payload when merging metadata.
         if (hit.score > existing.hit.score) {
           existing.hit = hit;
         }
@@ -50,12 +53,14 @@ export function fuseHitsByRrf(
 }
 
 /**
- * Rewrite → multi-query dense + lexical → RRF → time diversify.
+ * Rewrite → multi-query dense + lexical → RRF → time diversify → rerank.
  */
 export async function retrieveHybridNotebookChunks(options: {
   notebookId: string;
   ownerId: string;
   question: string;
+  /** Recent chat turns for follow-up-aware rewrite/rerank. */
+  historySummary?: string;
   finalLimit?: number;
   minGapSeconds?: number;
 }): Promise<{
@@ -65,43 +70,53 @@ export async function retrieveHybridNotebookChunks(options: {
   const finalLimit = options.finalLimit ?? DEFAULT_FINAL_LIMIT;
   const minGapSeconds = options.minGapSeconds ?? DEFAULT_MIN_GAP_SECONDS;
 
-  const rewritten = await rewriteRetrievalQuery(options.question);
-  const embeddingQueries =
+  const rewritten = await rewriteRetrievalQuery(options.question, {
+    historySummary: options.historySummary,
+  });
+
+  const embeddingQueries = (
     rewritten.embeddingQueries.length > 0
       ? rewritten.embeddingQueries
-      : [options.question];
+      : [options.question]
+  ).slice(0, MAX_EMBED_QUERIES);
 
   const vectors = await embedTexts(embeddingQueries);
 
-  const denseLists = await Promise.all(
-    vectors.map((vector) =>
-      searchNotebookChunks({
-        notebookId: options.notebookId,
-        ownerId: options.ownerId,
-        vector,
-        limit: DENSE_LIMIT_PER_QUERY,
-      }),
+  const [denseLists, lexicalHits] = await Promise.all([
+    Promise.all(
+      vectors.map((vector) =>
+        searchNotebookChunks({
+          notebookId: options.notebookId,
+          ownerId: options.ownerId,
+          vector,
+          limit: DENSE_LIMIT_PER_QUERY,
+        }),
+      ),
     ),
-  );
-
-  let lexicalHits: ScoredChunkHit[] = [];
-  try {
-    lexicalHits = await searchNotebookChunksLexical({
+    searchNotebookChunksLexical({
       notebookId: options.notebookId,
       query: rewritten.lexicalQuery || options.question,
       limit: LEXICAL_LIMIT,
-    });
-  } catch (error) {
-    console.error("[lexical-search]", error);
-  }
+    }).catch((error) => {
+      console.error("[lexical-search]", error);
+      return [] as ScoredChunkHit[];
+    }),
+  ]);
 
   const fused = fuseHitsByRrf([...denseLists, lexicalHits], {
-    limit: DEFAULT_CANDIDATE_LIMIT,
+    limit: FUSED_CANDIDATE_LIMIT,
   });
 
-  const hits = diversifyHitsByTime(fused, {
-    finalLimit,
+  const diversified = diversifyHitsByTime(fused, {
+    finalLimit: Math.max(finalLimit, DIVERSIFY_LIMIT),
     minGapSeconds,
+  });
+
+  const hits = await rerankHitsForQuestion({
+    question: options.question,
+    hits: diversified,
+    finalLimit,
+    historySummary: options.historySummary,
   });
 
   return { hits, rewritten };

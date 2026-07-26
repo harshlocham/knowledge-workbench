@@ -37,7 +37,7 @@ const STOPWORDS = new Set([
   "with",
 ]);
 
-/** Turn a keyword string into an OR full-text query (`mud | excavator | buried`). */
+/** Turn a keyword string into an OR full-text query (`mud:* | excavator:*`). */
 export function buildOrTsQuery(input: string): string {
   const terms = input
     .toLowerCase()
@@ -49,13 +49,12 @@ export function buildOrTsQuery(input: string): string {
   const unique = [...new Set(terms)].slice(0, 16);
   if (unique.length === 0) return "";
 
-  // Escape tsquery special chars inside terms; keep alphanumerics only after filter.
   return unique.map((term) => `${term}:*`).join(" | ");
 }
 
 /**
  * Postgres full-text search over chunk content for a notebook.
- * Uses OR semantics so multi-keyword rewrites still match partial chunks.
+ * Prefers stored `search_vector` (GIN) when present; falls back to on-the-fly tsvector.
  */
 export async function searchNotebookChunksLexical(options: {
   notebookId: string;
@@ -66,6 +65,35 @@ export async function searchNotebookChunksLexical(options: {
   if (!tsQuery) return [];
 
   const limit = options.limit ?? 20;
+
+  try {
+    return await runLexicalQuery({
+      notebookId: options.notebookId,
+      tsQuery,
+      limit,
+      useStoredVector: true,
+    });
+  } catch (error) {
+    // Pre-migration DBs may not have search_vector yet.
+    console.warn("[lexical-search] stored vector failed; falling back", error);
+    return runLexicalQuery({
+      notebookId: options.notebookId,
+      tsQuery,
+      limit,
+      useStoredVector: false,
+    });
+  }
+}
+
+async function runLexicalQuery(options: {
+  notebookId: string;
+  tsQuery: string;
+  limit: number;
+  useStoredVector: boolean;
+}): Promise<ScoredChunkHit[]> {
+  const vectorExpr = options.useStoredVector
+    ? sql`c.search_vector`
+    : sql`to_tsvector('english', c.content)`;
 
   const result = await db.execute<{
     id: string;
@@ -82,14 +110,14 @@ export async function searchNotebookChunksLexical(options: {
       c.content,
       c.locator,
       ts_rank_cd(
-        to_tsvector('english', c.content),
-        to_tsquery('english', ${tsQuery})
+        ${vectorExpr},
+        to_tsquery('english', ${options.tsQuery})
       ) AS rank
     FROM chunks c
     WHERE c.notebook_id = ${options.notebookId}
-      AND to_tsvector('english', c.content) @@ to_tsquery('english', ${tsQuery})
+      AND ${vectorExpr} @@ to_tsquery('english', ${options.tsQuery})
     ORDER BY rank DESC
-    LIMIT ${limit}
+    LIMIT ${options.limit}
   `);
 
   const records = result.rows ?? [];

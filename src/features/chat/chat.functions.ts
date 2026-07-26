@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { notFound } from "@tanstack/react-router";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "#/db/index.ts";
@@ -19,6 +19,19 @@ import { formatVttTimestamp } from "#/lib/rag/parse-vtt.server.ts";
 
 const RETRIEVAL_FINAL_LIMIT = 8;
 const RETRIEVAL_MIN_GAP_SECONDS = 90;
+const CHAT_HISTORY_LIMIT = 6;
+
+function buildHistorySummary(
+  rows: Array<{ role: "user" | "assistant"; content: string }>,
+) {
+  return rows
+    .map((row) => {
+      const label = row.role === "user" ? "User" : "Assistant";
+      const text = row.content.replace(/\s+/g, " ").trim().slice(0, 400);
+      return `${label}: ${text}`;
+    })
+    .join("\n");
+}
 
 export type ChatMessageDTO = {
   id: string;
@@ -106,10 +119,30 @@ export const askNotebook = createServerFn({ method: "POST" })
       };
     }
 
+    const priorMessages = await db
+      .select({
+        role: messages.role,
+        content: messages.content,
+      })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.notebookId, data.notebookId),
+          ne(messages.id, userMessage.id),
+        ),
+      )
+      .orderBy(desc(messages.createdAt))
+      .limit(CHAT_HISTORY_LIMIT);
+
+    const historySummary = buildHistorySummary(
+      [...priorMessages].reverse(),
+    );
+
     const { hits } = await retrieveHybridNotebookChunks({
       notebookId: data.notebookId,
       ownerId: userId,
       question: data.question,
+      historySummary,
       finalLimit: RETRIEVAL_FINAL_LIMIT,
       minGapSeconds: RETRIEVAL_MIN_GAP_SECONDS,
     });
@@ -152,12 +185,19 @@ export const askNotebook = createServerFn({ method: "POST" })
     const { answer, citedIndexes } = await generateGroundedAnswer({
       question: data.question,
       contexts,
+      historySummary,
     });
 
+    // Citation hygiene: only persist indexes the model actually cited.
+    // If it forgot citations but answered, keep the top 2 retrieved clips max.
     const indexes =
       citedIndexes.length > 0
         ? citedIndexes
-        : contexts.map((ctx) => ctx.index);
+        : /cannot find|couldn't find|do not contain|don't contain|no relevant/i.test(
+              answer,
+            )
+          ? []
+          : contexts.slice(0, 2).map((ctx) => ctx.index);
 
     const citations: MessageCitation[] = [];
     for (const citationNumber of indexes) {
@@ -176,12 +216,14 @@ export const askNotebook = createServerFn({ method: "POST" })
       });
     }
 
-    // Prefer answer that already has citations; if model omitted them but we have context, append note
     let finalAnswer = answer;
     if (
       contexts.length > 0 &&
       citedIndexes.length === 0 &&
-      !/cannot find|couldn't find|do not contain|don't contain/i.test(answer)
+      citations.length > 0 &&
+      !/cannot find|couldn't find|do not contain|don't contain|no relevant/i.test(
+        answer,
+      )
     ) {
       const fallback = citations
         .map((citation) => `[${citation.citationNumber}]`)

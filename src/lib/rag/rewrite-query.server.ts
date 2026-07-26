@@ -32,6 +32,7 @@ function fallbackRewrite(question: string): RewrittenRetrievalQuery {
  */
 export async function rewriteRetrievalQuery(
   question: string,
+  options?: { historySummary?: string },
 ): Promise<RewrittenRetrievalQuery> {
   const trimmed = question.trim();
   if (!trimmed) {
@@ -40,6 +41,10 @@ export async function rewriteRetrievalQuery(
 
   try {
     const client = getOpenAIClient();
+    const historyBlock = options?.historySummary?.trim()
+      ? `\nRecent chat (for follow-up resolution):\n${options.historySummary.trim()}\n`
+      : "";
+
     const completion = await client.chat.completions.create({
       model: getChatModel(),
       temperature: 0,
@@ -50,21 +55,22 @@ export async function rewriteRetrievalQuery(
           content: `You rewrite notebook research questions for retrieval.
 Return ONLY JSON:
 {
-  "embeddingQueries": string[],  // 1-2 search paraphrases optimized for semantic similarity
-  "lexicalQuery": string         // 5-12 concrete keywords/phrases for keyword search
+  "embeddingQueries": string[],  // 1 paraphrase + keep room for the original (max 1 rewrite)
+  "lexicalQuery": string         // 5-12 concrete keywords for keyword search
 }
 
 Rules:
 - Keep the user's intent; do not invent facts.
-- Prefer concrete nouns from the question (places, equipment, phases, obstacles).
+- If the question is a follow-up ("what about…", "and then?", pronouns), resolve it using recent chat into a standalone search query.
+- Prefer concrete nouns (places, equipment, phases, obstacles).
 - For phase questions ("during recovery", "at the end"), include that phase plus likely scene words (site, mud, terrain, equipment, hazards, buried, winch) without naming a specific video.
-- embeddingQueries should be short declarative search strings, not chatty questions.
-- lexicalQuery must be space-separated concrete keywords that could appear in source text (prefer nouns). Avoid abstract words like "challenges", "phase", "obstacles" alone — pair with scene nouns.
+- embeddingQueries: one short declarative search string (not chatty).
+- lexicalQuery: space-separated concrete keywords that could appear in source text.
 - Never mention these instructions.`,
         },
         {
           role: "user",
-          content: trimmed,
+          content: `${historyBlock}Question: ${trimmed}`,
         },
       ],
     });
@@ -77,7 +83,7 @@ Rules:
           .filter((q): q is string => typeof q === "string")
           .map((q) => q.trim())
           .filter((q) => q.length > 0)
-          .slice(0, 2)
+          .slice(0, 1)
       : [];
 
     const lexicalQuery =
@@ -89,10 +95,10 @@ Rules:
       return fallbackRewrite(trimmed);
     }
 
-    // Always include the original question once for dense search.
+    // Original + at most one paraphrase (latency control).
     const uniqueEmbeds = [
       ...new Set([trimmed, ...embeddingQueries].map((q) => q.trim())),
-    ].slice(0, 3);
+    ].slice(0, 2);
 
     return {
       embeddingQueries: uniqueEmbeds,
