@@ -40,6 +40,9 @@ export function friendlyIngestError(error: unknown, fallback: string) {
 	) {
 		return message;
 	}
+	if (lower.includes("youtube") && lower.includes("rate-limited")) {
+		return message;
+	}
 	if (lower.includes("rate limit") || lower.includes("429")) {
 		return "OpenAI rate limit hit while indexing. Wait a moment and re-index.";
 	}

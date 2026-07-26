@@ -128,7 +128,17 @@ export function notebookDescriptionFromSummary(
 		return true;
 	});
 
-	let text = (candidates[0] ?? "").replace(/\[\d+\]/g, "").replace(/\*+/g, "");
+	// Prefer joining consecutive overview paragraphs (not only the first line).
+	const overviewLines: string[] = [];
+	for (const line of candidates) {
+		overviewLines.push(line);
+		if (overviewLines.join(" ").length > 400) break;
+	}
+
+	let text = overviewLines
+		.join(" ")
+		.replace(/\[\d+\]/g, "")
+		.replace(/\*+/g, "");
 	text = text.replace(/\s+/g, " ").trim();
 
 	if (!text || text.toLowerCase() === sourceTitle.trim().toLowerCase()) {
@@ -136,11 +146,17 @@ export function notebookDescriptionFromSummary(
 		return `Research notes grounded in this ${label.toLowerCase()}.`;
 	}
 
-	// Keep card copy short.
+	// Keep card copy short — first 2 sentences when possible.
 	if (text.length > 280) {
-		const cut = text.slice(0, 277);
-		const at = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf(" "));
-		text = `${(at > 120 ? cut.slice(0, at + 1) : cut).trim()}…`;
+		const sentenceCut = text.match(/^(.+?[.!?])\s+(.+?[.!?])/);
+		if (sentenceCut) {
+			text = `${sentenceCut[1]} ${sentenceCut[2]}`.trim();
+		}
+		if (text.length > 280) {
+			const cut = text.slice(0, 277);
+			const at = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf(" "));
+			text = `${(at > 120 ? cut.slice(0, at + 1) : cut).trim()}…`;
+		}
 	}
 
 	return text.slice(0, 2000);

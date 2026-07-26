@@ -11,12 +11,12 @@ import {
 import { generateSourceAddedSummary } from "#/lib/rag/llm.ts";
 import { formatVttTimestamp } from "#/lib/rag/parse-vtt.server.ts";
 
-const SUMMARY_CHUNK_LIMIT = 14;
-const EXCERPT_CHAR_LIMIT = 1100;
+const SUMMARY_CHUNK_LIMIT = 18;
+const EXCERPT_CHAR_LIMIT = 1400;
 
 /**
  * After a source indexes successfully, post an assistant chat message summarizing it
- * (NotebookLM-style "I've added this source" overview).
+ * (NotebookLM-style source overview after indexing).
  */
 export async function postSourceAddedSummaryMessage(options: {
   sourceId: string;

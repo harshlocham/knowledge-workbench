@@ -79,6 +79,62 @@ async function fetchYoutubeTitle(videoId: string): Promise<string | null> {
   }
 }
 
+const TRANSCRIPT_FETCH_ATTEMPTS = 3;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function transcriptFetchErrorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : "Failed to fetch YouTube transcript";
+}
+
+/** Rate limits / captchas are often misreported as "disabled" by scrapers. */
+function isTransientTranscriptError(message: string) {
+  return /too many|captcha|receiving too many requests/i.test(message);
+}
+
+function mapTranscriptFetchError(message: string): Error {
+  if (isTransientTranscriptError(message)) {
+    return new Error(
+      "YouTube rate-limited caption fetch. Wait a moment and re-index.",
+    );
+  }
+  if (/disabled|not available|unavailable/i.test(message)) {
+    return new Error(
+      "No captions available for this video (disabled, private, or missing transcript)",
+    );
+  }
+  return new Error(message);
+}
+
+async function fetchTranscriptWithRetry(videoId: string) {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= TRANSCRIPT_FETCH_ATTEMPTS; attempt++) {
+    try {
+      return await fetchTranscript(videoId);
+    } catch (error) {
+      lastError = error;
+      const message = transcriptFetchErrorMessage(error);
+      const retryable =
+        isTransientTranscriptError(message) ||
+        /disabled|not available|unavailable/i.test(message);
+
+      if (!retryable || attempt === TRANSCRIPT_FETCH_ATTEMPTS) {
+        throw mapTranscriptFetchError(message);
+      }
+
+      // YouTube often flakes on the first scrape; back off before retrying.
+      await sleep(400 * attempt);
+    }
+  }
+
+  throw mapTranscriptFetchError(transcriptFetchErrorMessage(lastError));
+}
+
 /** Fetch captions and title for a YouTube video. */
 export async function extractYoutubeTranscript(
   rawUrlOrId: string,
@@ -86,19 +142,7 @@ export async function extractYoutubeTranscript(
   const videoId = extractYoutubeVideoId(rawUrlOrId);
   const watchUrl = youtubeWatchUrl(videoId);
 
-  let items: Awaited<ReturnType<typeof fetchTranscript>>;
-  try {
-    items = await fetchTranscript(videoId);
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to fetch YouTube transcript";
-    if (/disabled|not available|unavailable|too many/i.test(message)) {
-      throw new Error(
-        "No captions available for this video (disabled, private, or missing transcript)",
-      );
-    }
-    throw new Error(message);
-  }
+  const items = await fetchTranscriptWithRetry(videoId);
 
   if (!items.length) {
     throw new Error("YouTube returned an empty transcript");

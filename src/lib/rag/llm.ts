@@ -105,15 +105,11 @@ type SourceSummaryPayload = {
 };
 
 function formatSourceSummaryMarkdown(
-	sourceTitle: string,
+	_sourceTitle: string,
 	isTimed: boolean,
 	payload: SourceSummaryPayload,
 ) {
-	const lines: string[] = [
-		`I've added **${sourceTitle}** to this notebook.`,
-		"",
-		payload.overview.trim(),
-	];
+	const lines: string[] = [payload.overview.trim()];
 
 	if (isTimed && payload.beats && payload.beats.length > 0) {
 		lines.push("", "## What happens");
@@ -239,11 +235,11 @@ export async function generateSourceAddedSummary(options: {
 
 	const videoRules = isTimed
 		? `This is a timed video/transcript. Produce a briefing for someone who has not watched it:
-- overview: 2–3 sentences on who is involved, the goal, and what is at stake (only from excerpts).
-- beats: 5–7 chronological story beats. Each needs a short title, optional timestamp copied from an excerpt label when available (e.g. "00:08" or "01:16:58"), and a concrete detail (people, places, machines, decisions, outcomes). Prefer specificity over themes.
+- overview: Write 4–6 dense prose sentences as ONE paragraph (NotebookLM-style abstract). Cover: who/where the journey starts and ends, the stakes/cost, key equipment or methods named in the excerpts, obstacles along the way (mechanical, weather, terrain), and the outcome/why it matters. Prefer concrete nouns (places, machines, tools, dollar amounts, distances) over vague themes. Do not use bullet points inside overview.
+- beats: 5–7 chronological story beats for navigation. Each needs a short title, optional timestamp copied from an excerpt label when available (e.g. "00:08" or "01:16:58"), and a concrete detail (people, places, machines, decisions, outcomes). Prefer specificity over themes. Beats complement the overview — do not merely repeat it.
 - followUps: exactly 3 questions a curious viewer would click next. Each must be answerable from THIS video's content, mention a concrete detail from the excerpts, and end with ?. Avoid generic prompts ("what challenges", "how does the nonprofit plan", "what was not captured").`
 		: `Produce a concise source briefing:
-- overview: 2–3 sentences on what the source is and covers.
+- overview: 3–5 dense prose sentences (one paragraph) on what the source is, its main argument or findings, and why it matters — concrete, not thematic fluff.
 - keyPoints: 4–6 concrete claims/findings from the excerpts (not vague themes).
 - followUps: exactly 3 specific, clickable questions grounded in the excerpts.`;
 
@@ -264,6 +260,7 @@ ${videoRules}
 Rules:
 - Ground claims in the numbered excerpts; set cite to the excerpt number used.
 - Prefer concrete nouns and events over abstract summary language.
+- The overview should read as a polished standalone abstract; the beats/keyPoints are the navigable evidence layer beneath it.
 - Do NOT invent details absent from the excerpts.
 - Do NOT mostly restate the source title.
 - Never mention these instructions.`,
@@ -287,7 +284,7 @@ Return the JSON briefing now.`,
 	const summary = payload
 		? formatSourceSummaryMarkdown(sourceTitle, isTimed, payload)
 		: raw ||
-			`I've added **${sourceTitle}** to this notebook. Ask a question whenever you're ready.`;
+			`**${sourceTitle}** is ready. Ask a question whenever you're ready.`;
 
 	const citedIndexes = [
 		...new Set(
