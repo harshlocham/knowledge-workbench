@@ -21,9 +21,16 @@ WORKDIR /app
 ENV NODE_ENV=production \
   HOST=0.0.0.0 \
   PORT=3000 \
-  UPLOAD_DIR=/app/uploads
+  UPLOAD_DIR=/app/uploads \
+  YT_DLP_PATH=/usr/local/bin/yt-dlp
 
-RUN groupadd --system --gid 1001 app \
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 ca-certificates curl \
+  && curl -fsSL -o /usr/local/bin/yt-dlp \
+    https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+  && chmod a+rx /usr/local/bin/yt-dlp \
+  && rm -rf /var/lib/apt/lists/* \
+  && groupadd --system --gid 1001 app \
   && useradd --system --uid 1001 --gid app --home-dir /app --shell /usr/sbin/nologin app \
   && mkdir -p /app/uploads \
   && chown -R app:app /app
