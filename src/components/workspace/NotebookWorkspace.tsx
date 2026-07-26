@@ -54,8 +54,6 @@ import {
 	reindexSource,
 	type SourceDTO,
 } from "#/features/sources/sources.functions.ts";
-import { fetchYoutubeTranscriptInBrowser } from "#/lib/rag/fetch-youtube-transcript.client.ts";
-import { extractYoutubeVideoId } from "#/lib/rag/youtube-url.ts";
 import { useWorkspaceLayout } from "#/hooks/use-workspace-layout.ts";
 import { fileToBase64 } from "#/lib/file-to-base64.ts";
 import {
@@ -486,32 +484,11 @@ export function NotebookWorkspace({
 					},
 				});
 			} else {
-				const youtubeUrl = payload.youtubeUrl.trim();
-				let transcript:
-					| Awaited<
-							ReturnType<typeof fetchYoutubeTranscriptInBrowser>
-					  >
-					| undefined;
-				try {
-					const videoId = extractYoutubeVideoId(youtubeUrl);
-					transcript = await fetchYoutubeTranscriptInBrowser(videoId);
-				} catch {
-					// Browser relays are flaky; server will fetch via
-					// youtube-transcript and/or yt-dlp.
-				}
 				created = await createYoutubeSourceFn({
 					data: {
 						notebookId: notebook.id,
-						url: youtubeUrl,
-						title:
-							payload.title.trim() || transcript?.title || undefined,
-						transcript: transcript
-							? {
-									title: transcript.title,
-									language: transcript.language,
-									cues: transcript.cues,
-								}
-							: undefined,
+						url: payload.youtubeUrl.trim(),
+						title: payload.title.trim() || undefined,
 					},
 				});
 			}

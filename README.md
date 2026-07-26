@@ -49,7 +49,7 @@ docker compose -f docker-compose.prod.yml up --build -d
 
 Migrations run automatically on app container start. Caddy issues a Let’s Encrypt cert for `DOMAIN`.
 
-**YouTube on a VPS:** paste the URL as usual. The app tries browser caption fetch first, then server-side `youtube-transcript`, then **yt-dlp** (bundled in the Docker image). Optional `YOUTUBE_PROXY_URL` remains a last-resort residential proxy.
+**YouTube on a VPS:** paste the URL as usual. The server tries `youtube-transcript`, then **yt-dlp** (bundled in the Docker image). Optional `YOUTUBE_PROXY_URL` is a last-resort residential proxy.
 
 ```bash
 docker compose -f docker-compose.prod.yml logs -f
