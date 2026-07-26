@@ -246,28 +246,51 @@ export function NotebookWorkspace({
 		[sources],
 	);
 
+	// Stay subscribed after indexing finishes — playlist overview is written later.
+	const [watchSourceEvents, setWatchSourceEvents] = useState(hasPendingSources);
 	useEffect(() => {
-		if (!hasPendingSources) return;
+		if (hasPendingSources) setWatchSourceEvents(true);
+	}, [hasPendingSources]);
+
+	useEffect(() => {
+		if (!watchSourceEvents) return;
 
 		const events = new EventSource(
 			`/api/notebooks/${notebook.id}/source-events`,
 		);
 		let fallbackTimer: number | undefined;
+		const overviewPollTimers: number[] = [];
+
+		const refreshMessages = () =>
+			listMessagesFn({ data: { notebookId: notebook.id } })
+				.then(setMessages)
+				.catch(() => undefined);
 
 		events.onmessage = (event) => {
 			try {
 				const payload = JSON.parse(event.data) as {
 					type: string;
 					sources?: SourceDTO[];
+					messages?: typeof messages;
 				};
 				if (payload.type === "sources" && Array.isArray(payload.sources)) {
 					setSources(payload.sources);
 				}
+				if (payload.type === "messages" && Array.isArray(payload.messages)) {
+					setMessages(payload.messages);
+				}
 				if (payload.type === "done") {
 					events.close();
-					void listMessagesFn({ data: { notebookId: notebook.id } })
-						.then(setMessages)
-						.catch(() => undefined);
+					setWatchSourceEvents(false);
+					void refreshMessages();
+					// Safety net if overview lands right after the stream closes.
+					for (const ms of [2_000, 6_000, 15_000]) {
+						overviewPollTimers.push(
+							window.setTimeout(() => {
+								void refreshMessages();
+							}, ms),
+						);
+					}
 					void router.invalidate();
 				}
 			} catch {
@@ -279,18 +302,29 @@ export function NotebookWorkspace({
 			events.close();
 			fallbackTimer = window.setInterval(() => {
 				void listSourcesFn({ data: { notebookId: notebook.id } })
-					.then(setSources)
+					.then((next) => {
+						setSources(next);
+						if (!next.some((source) => isPendingStatus(source.status))) {
+							if (fallbackTimer) {
+								window.clearInterval(fallbackTimer);
+								fallbackTimer = undefined;
+							}
+							setWatchSourceEvents(false);
+						}
+					})
 					.catch(() => undefined);
+				void refreshMessages();
 			}, 2000);
 		};
 
 		return () => {
 			events.close();
 			if (fallbackTimer) window.clearInterval(fallbackTimer);
+			for (const timer of overviewPollTimers) window.clearTimeout(timer);
 		};
-	}, [hasPendingSources, notebook.id, listSourcesFn, listMessagesFn, router]);
+	}, [watchSourceEvents, notebook.id, listSourcesFn, listMessagesFn, router]);
 
-	// When a source newly becomes ready, refresh chat so the auto overview shows.
+	// When a source newly becomes ready, refresh chat so single-source overviews show.
 	useEffect(() => {
 		const readyIds = sources
 			.filter((source) => source.status === "ready")

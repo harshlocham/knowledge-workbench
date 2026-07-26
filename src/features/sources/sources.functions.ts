@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { notFound } from "@tanstack/react-router";
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "#/db/index.ts";
@@ -136,7 +136,20 @@ async function beginCreate(notebookId: string) {
   const { userId } = await requireOwnedNotebook(notebookId);
   assertCreateRateLimit(userId);
   await assertNotebookSourceCapacity(notebookId);
-  return { userId };
+
+  const [row] = await db
+    .select({ value: count() })
+    .from(sources)
+    .where(eq(sources.notebookId, notebookId));
+
+  /** Only the notebook's first import (1 source or a playlist) gets an auto-overview. */
+  const isIntroImport = (row?.value ?? 0) === 0;
+
+  return { userId, isIntroImport };
+}
+
+function summaryMeta(isIntroImport: boolean) {
+  return isIntroImport ? {} : { suppressSourceSummary: true as const };
 }
 
 export const listSources = createServerFn({ method: "GET" })
@@ -173,7 +186,7 @@ export const createTextSource = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await beginCreate(data.notebookId);
+    const { userId, isIntroImport } = await beginCreate(data.notebookId);
 
     const metadata: TextSourceMetadata = {
       content: data.content,
@@ -189,6 +202,7 @@ export const createTextSource = createServerFn({ method: "POST" })
         status: "indexing",
         metadata: {
           ...metadata,
+          ...summaryMeta(isIntroImport),
           indexProgress: {
             phase: "queued",
             percent: 5,
@@ -232,7 +246,7 @@ export const createPdfSource = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await beginCreate(data.notebookId);
+    const { userId, isIntroImport } = await beginCreate(data.notebookId);
 
     const bytes = decodeBase64(data.fileBase64);
     if (bytes.byteLength === 0) {
@@ -255,6 +269,7 @@ export const createPdfSource = createServerFn({ method: "POST" })
         metadata: {
           originalFileName: data.fileName,
           mimeType: "application/pdf",
+          ...summaryMeta(isIntroImport),
         },
       })
       .returning();
@@ -280,6 +295,7 @@ export const createPdfSource = createServerFn({ method: "POST" })
           metadata: {
             originalFileName: data.fileName,
             mimeType: "application/pdf",
+            ...summaryMeta(isIntroImport),
             indexProgress: {
               phase: "queued",
               percent: 5,
@@ -304,6 +320,7 @@ export const createPdfSource = createServerFn({ method: "POST" })
         existingMetadata: {
           originalFileName: data.fileName,
           mimeType: "application/pdf",
+          ...summaryMeta(isIntroImport),
         },
       });
     });
@@ -320,7 +337,7 @@ export const createUrlSource = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await beginCreate(data.notebookId);
+    const { userId, isIntroImport } = await beginCreate(data.notebookId);
 
     let url: string;
     try {
@@ -348,6 +365,7 @@ export const createUrlSource = createServerFn({ method: "POST" })
         status: "indexing",
         originalUrl: url,
         metadata: {
+          ...summaryMeta(isIntroImport),
           indexProgress: {
             phase: "queued",
             percent: 5,
@@ -392,7 +410,7 @@ export const createVttSource = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await beginCreate(data.notebookId);
+    const { userId, isIntroImport } = await beginCreate(data.notebookId);
 
     const bytes = decodeBase64(data.fileBase64);
     if (bytes.byteLength === 0) {
@@ -415,6 +433,7 @@ export const createVttSource = createServerFn({ method: "POST" })
         metadata: {
           originalFileName: data.fileName,
           mimeType: "text/vtt",
+          ...summaryMeta(isIntroImport),
         },
       })
       .returning();
@@ -440,6 +459,7 @@ export const createVttSource = createServerFn({ method: "POST" })
           metadata: {
             originalFileName: data.fileName,
             mimeType: "text/vtt",
+            ...summaryMeta(isIntroImport),
             indexProgress: {
               phase: "queued",
               percent: 5,
@@ -464,6 +484,7 @@ export const createVttSource = createServerFn({ method: "POST" })
         existingMetadata: {
           originalFileName: data.fileName,
           mimeType: "text/vtt",
+          ...summaryMeta(isIntroImport),
         },
       });
     });
@@ -480,18 +501,21 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
-    const { userId } = await requireOwnedNotebook(data.notebookId);
-    assertCreateRateLimit(userId);
+    const { userId, isIntroImport } = await beginCreate(data.notebookId);
     assertYoutubeProxyConfiguredForProduction();
+    const introMeta = summaryMeta(isIntroImport);
 
     // Playlist → one YouTube source per video (same indexer + proxy).
+    // Capacity for N videos: beginCreate only checked +1; expand check below.
     if (isYoutubePlaylistUrl(data.url)) {
       const playlist = await extractYoutubePlaylist(data.url);
+      // beginCreate already reserved 1 slot mentally; re-check for full playlist.
       await assertNotebookSourceCapacity(
         data.notebookId,
         playlist.videos.length,
       );
 
+      const importBatchId = crypto.randomUUID();
       const created: SourceDTO[] = [];
       for (const [index, video] of playlist.videos.entries()) {
         const watchUrl = youtubeWatchUrl(video.videoId);
@@ -500,6 +524,18 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
             ? data.title.trim()
             : (video.title?.trim() ||
                 `${playlist.title} · ${index + 1}/${playlist.videos.length}`);
+
+        const batchMeta = {
+          videoId: video.videoId,
+          playlistId: playlist.playlistId,
+          playlistUrl: playlist.playlistUrl,
+          playlistTitle: playlist.title,
+          playlistIndex: index + 1,
+          importBatchId,
+          importBatchSize: playlist.videos.length,
+          importBatchTitle: playlist.title,
+          ...introMeta,
+        };
 
         const [row] = await db
           .insert(sources)
@@ -510,11 +546,7 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
             status: "indexing",
             originalUrl: watchUrl,
             metadata: {
-              videoId: video.videoId,
-              playlistId: playlist.playlistId,
-              playlistUrl: playlist.playlistUrl,
-              playlistTitle: playlist.title,
-              playlistIndex: index + 1,
+              ...batchMeta,
               indexProgress: {
                 phase: "queued",
                 percent: 5,
@@ -535,13 +567,7 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
             ownerId: userId,
             urlOrId: video.videoId,
             updateTitleFromVideo: !video.title?.trim(),
-            existingMetadata: {
-              videoId: video.videoId,
-              playlistId: playlist.playlistId,
-              playlistUrl: playlist.playlistUrl,
-              playlistTitle: playlist.title,
-              playlistIndex: index + 1,
-            },
+            existingMetadata: batchMeta,
           });
         });
 
@@ -550,8 +576,6 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
 
       return { sources: created, playlistTitle: playlist.title };
     }
-
-    await assertNotebookSourceCapacity(data.notebookId, 1);
 
     let videoId: string;
     try {
@@ -575,6 +599,7 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
         originalUrl: watchUrl,
         metadata: {
           videoId,
+          ...introMeta,
           indexProgress: {
             phase: "queued",
             percent: 5,
@@ -595,7 +620,7 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
         ownerId: userId,
         urlOrId: videoId,
         updateTitleFromVideo: !data.title?.trim(),
-        existingMetadata: { videoId },
+        existingMetadata: { videoId, ...introMeta },
       });
     });
 

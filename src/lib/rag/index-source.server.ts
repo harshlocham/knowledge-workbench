@@ -8,7 +8,10 @@ import { friendlyIngestError } from "#/lib/ingest/limits.ts";
 import { deletePointsBySourceId, upsertChunkPoints } from "#/lib/qdrant/points.ts";
 import type { TextChunk } from "#/lib/rag/chunk.ts";
 import { embedTexts } from "#/lib/rag/embed.ts";
-import { tryPostSourceAddedSummaryMessage } from "#/lib/rag/source-summary-message.server.ts";
+import {
+  tryFinalizeImportBatchSummarySafe,
+  tryPostSourceAddedSummaryMessage,
+} from "#/lib/rag/source-summary-message.server.ts";
 
 export type IndexProgress = {
   phase: "queued" | "extracting" | "embedding" | "storing" | "finalizing";
@@ -68,6 +71,24 @@ export async function setSourceStatus(
         .where(eq(messages.id, previousSummaryMessageId));
     } catch {
       // Old overview may already be gone
+    }
+  }
+
+  // A failed playlist/batch member still counts toward "batch done".
+  if (
+    status === "failed" &&
+    typeof metadata.importBatchId === "string"
+  ) {
+    const [row] = await db
+      .select({ notebookId: sources.notebookId })
+      .from(sources)
+      .where(eq(sources.id, sourceId))
+      .limit(1);
+    if (row) {
+      await tryFinalizeImportBatchSummarySafe({
+        notebookId: row.notebookId,
+        importBatchId: metadata.importBatchId,
+      });
     }
   }
 }
@@ -185,8 +206,14 @@ export async function persistSourceChunks(options: {
     },
   }));
 
+  const importBatchId =
+    typeof readyMetadata.importBatchId === "string"
+      ? readyMetadata.importBatchId
+      : undefined;
+
   try {
     // Overview only needs Postgres chunks; overlap it with the slow Cloud upload.
+    // Batch imports (playlist) skip per-source chat messages — one summary after all ready.
     await Promise.all([
       upsertChunkPoints(pointInputs, {
         onBatchProgress: async (uploaded, total) => {
@@ -198,16 +225,18 @@ export async function persistSourceChunks(options: {
           });
         },
       }),
-      tryPostSourceAddedSummaryMessage({
-        sourceId,
-        notebookId,
-        sourceType,
-        chunkRows: inserted.map((row) => ({
-          id: row.id,
-          content: row.content,
-          locator: row.locator,
-        })),
-      }),
+      importBatchId
+        ? Promise.resolve(null)
+        : tryPostSourceAddedSummaryMessage({
+            sourceId,
+            notebookId,
+            sourceType,
+            chunkRows: inserted.map((row) => ({
+              id: row.id,
+              content: row.content,
+              locator: row.locator,
+            })),
+          }),
     ]);
   } catch (error) {
     // Qdrant failed after Postgres insert — remove partial rows/vectors
@@ -253,6 +282,13 @@ export async function persistSourceChunks(options: {
       updatedAt: new Date(),
     })
     .where(eq(sources.id, sourceId));
+
+  if (importBatchId) {
+    await tryFinalizeImportBatchSummarySafe({
+      notebookId,
+      importBatchId,
+    });
+  }
 
   return { chunkCount: inserted.length };
 }

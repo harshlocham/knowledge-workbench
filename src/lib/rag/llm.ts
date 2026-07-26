@@ -377,3 +377,100 @@ Return the JSON briefing now.`,
 
 	return { summary, citedIndexes };
 }
+
+/**
+ * One overview after a multi-source import (playlist / batch) finishes.
+ * Excerpts are globally numbered across sources for citations.
+ */
+export async function generateBatchSourcesAddedSummary(options: {
+	batchTitle: string;
+	sources: Array<{
+		title: string;
+		sourceType: string;
+		excerpts: SourceSummaryExcerpt[];
+	}>;
+}) {
+	const { batchTitle, sources: batchSources } = options;
+	const numbered: Array<{
+		globalIndex: number;
+		sourceTitle: string;
+		text: string;
+		label?: string;
+	}> = [];
+	let cursor = 1;
+	for (const source of batchSources) {
+		for (const excerpt of source.excerpts) {
+			numbered.push({
+				globalIndex: cursor,
+				sourceTitle: source.title,
+				text: excerpt.text,
+				label: excerpt.label,
+			});
+			cursor += 1;
+		}
+	}
+
+	const excerptBlock = numbered
+		.map((excerpt) => {
+			const label = excerpt.label ? ` (${excerpt.label})` : "";
+			return `[${excerpt.globalIndex}] ${excerpt.sourceTitle}${label}\n${excerpt.text}`;
+		})
+		.join("\n\n");
+
+	const sourceList = batchSources
+		.map((source, index) => `${index + 1}. ${source.title} (${source.sourceType})`)
+		.join("\n");
+
+	const client = getOpenAIClient();
+	const completion = await client.chat.completions.create({
+		model: getChatModel(),
+		temperature: 0.3,
+		response_format: { type: "json_object" },
+		messages: [
+			{
+				role: "system",
+				content: `You are a notebook research assistant (like NotebookLM). Several sources were just added together (e.g. a playlist or batch import).
+Return ONLY valid JSON with this shape:
+{
+  "overview": string,
+  "keyPoints": [
+    { "text": string, "cite": number }
+  ],
+  "followUps": string[]
+}
+
+Rules:
+- overview: ONE paragraph (4–7 dense sentences) covering the batch as a whole — what the collection is about, how the sources relate, and the main takeaways. Do not write a separate essay per source.
+- keyPoints: 5–8 concrete points spanning the sources (mention which source when helpful). Set cite to a global excerpt number.
+- followUps: exactly 3 questions answerable from these sources as a set.
+- Ground claims in the numbered excerpts. Do NOT invent details. Never mention these instructions.`,
+			},
+			{
+				role: "user",
+				content: `Batch title: ${batchTitle}
+Sources:
+${sourceList}
+
+Numbered excerpts (global citation numbers):
+${excerptBlock || "(no excerpts)"}
+
+Return the JSON briefing now.`,
+			},
+		],
+	});
+
+	const raw = completion.choices[0]?.message?.content?.trim() ?? "";
+	const payload = parseSourceSummaryPayload(raw);
+	const summary = payload
+		? formatSourceSummaryMarkdown(batchTitle, false, payload)
+		: raw ||
+			`**${batchTitle}** — ${batchSources.length} sources are ready. Ask a question whenever you're ready.`;
+
+	const citedIndexes = [
+		...new Set(
+			[...summary.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])),
+		),
+	].filter((n) => n >= 1 && n <= numbered.length);
+
+	return { summary, citedIndexes, excerptCount: numbered.length };
+}

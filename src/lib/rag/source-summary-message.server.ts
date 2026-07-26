@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 
 import { db } from "#/db/index.ts";
+import { chunks } from "#/db/schema/chunks.ts";
 import { messages, type MessageCitation } from "#/db/schema/messages.ts";
 import { notebooks } from "#/db/schema/notebooks.ts";
 import { sources } from "#/db/schema/sources.ts";
@@ -8,15 +9,21 @@ import {
   notebookDescriptionFromSummary,
   shouldAutoUpdateNotebookDescription,
 } from "#/lib/notebook-title.ts";
-import { generateSourceAddedSummary } from "#/lib/rag/llm.ts";
+import {
+  generateBatchSourcesAddedSummary,
+  generateSourceAddedSummary,
+} from "#/lib/rag/llm.ts";
 import { formatVttTimestamp } from "#/lib/rag/parse-vtt.server.ts";
 
 const SUMMARY_CHUNK_LIMIT = 18;
+const BATCH_CHUNKS_PER_SOURCE = 8;
 const EXCERPT_CHAR_LIMIT = 1400;
 
 /**
  * After a source indexes successfully, post an assistant chat message summarizing it
  * (NotebookLM-style source overview after indexing).
+ * Multi-source imports (playlist / batch) skip this and finalize once via
+ * `tryFinalizeImportBatchSummary`.
  */
 export async function postSourceAddedSummaryMessage(options: {
   sourceId: string;
@@ -48,8 +55,22 @@ export async function postSourceAddedSummaryMessage(options: {
       ? (source.metadata as Record<string, unknown>)
       : {};
 
+  // Later imports: no auto-overview (only the notebook's first import batch).
+  if (meta.suppressSourceSummary === true) {
+    return null;
+  }
+
+  // Multi-source first import: wait until every source in the batch is ready.
+  if (typeof meta.importBatchId === "string") {
+    return null;
+  }
+
   // Avoid duplicate summaries if indexing retries for the same ready source.
   if (typeof meta.summaryMessageId === "string") {
+    return null;
+  }
+
+  if (await notebookAlreadyHasIntroSummary(notebookId)) {
     return null;
   }
 
@@ -123,6 +144,270 @@ export async function postSourceAddedSummaryMessage(options: {
     notebookId,
     sourceTitle: source.title,
     sourceType,
+    summary,
+  });
+
+  return message.id;
+}
+
+/** True if this notebook already posted its first-import overview. */
+async function notebookAlreadyHasIntroSummary(notebookId: string) {
+  const [row] = await db
+    .select({ id: sources.id })
+    .from(sources)
+    .where(
+      and(
+        eq(sources.notebookId, notebookId),
+        sql`(${sources.metadata}->>'summaryMessageId') IS NOT NULL`,
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+/**
+ * When every source in an import batch is ready (or failed), post ONE summary.
+ * Only used for the notebook's first import batch.
+ */
+export async function tryFinalizeImportBatchSummary(options: {
+  notebookId: string;
+  importBatchId: string;
+}) {
+  const { notebookId, importBatchId } = options;
+
+  if (await notebookAlreadyHasIntroSummary(notebookId)) {
+    return null;
+  }
+
+  const batchRows = await db
+    .select({
+      id: sources.id,
+      title: sources.title,
+      type: sources.type,
+      status: sources.status,
+      metadata: sources.metadata,
+      createdAt: sources.createdAt,
+    })
+    .from(sources)
+    .where(
+      and(
+        eq(sources.notebookId, notebookId),
+        sql`(${sources.metadata}->>'importBatchId') = ${importBatchId}`,
+      ),
+    )
+    .orderBy(asc(sources.createdAt));
+
+  if (batchRows.length === 0) {
+    return null;
+  }
+
+  // Non-intro batches should never finalize a chat overview.
+  const leaderProbe =
+    batchRows[0]?.metadata && typeof batchRows[0].metadata === "object"
+      ? (batchRows[0].metadata as Record<string, unknown>)
+      : {};
+  if (leaderProbe.suppressSourceSummary === true) {
+    return null;
+  }
+
+  const expectedSize = Number(
+    (batchRows[0]?.metadata as Record<string, unknown> | null)
+      ?.importBatchSize,
+  );
+  const size =
+    Number.isFinite(expectedSize) && expectedSize > 0
+      ? expectedSize
+      : batchRows.length;
+
+  if (batchRows.length < size) {
+    return null;
+  }
+
+  if (
+    batchRows.some(
+      (row) => row.status !== "ready" && row.status !== "failed",
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    batchRows.some((row) => {
+      const meta =
+        row.metadata && typeof row.metadata === "object"
+          ? (row.metadata as Record<string, unknown>)
+          : {};
+      return typeof meta.summaryMessageId === "string";
+    })
+  ) {
+    return null;
+  }
+
+  const leader = batchRows[0]!;
+  const leaderMeta =
+    leader.metadata && typeof leader.metadata === "object"
+      ? { ...(leader.metadata as Record<string, unknown>) }
+      : {};
+
+  // Claim so only one concurrent indexer posts the batch summary.
+  const [claimed] = await db
+    .update(sources)
+    .set({
+      metadata: {
+        ...leaderMeta,
+        batchSummaryClaimed: true,
+      },
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(sources.id, leader.id),
+        sql`(${sources.metadata}->>'batchSummaryClaimed') IS DISTINCT FROM 'true'`,
+      ),
+    )
+    .returning({ id: sources.id });
+
+  if (!claimed) {
+    return null;
+  }
+
+  const readyRows = batchRows.filter((row) => row.status === "ready");
+  if (readyRows.length === 0) {
+    return null;
+  }
+
+  const batchTitle =
+    (typeof leaderMeta.importBatchTitle === "string" &&
+      leaderMeta.importBatchTitle.trim()) ||
+    (typeof leaderMeta.playlistTitle === "string" &&
+      leaderMeta.playlistTitle.trim()) ||
+    `${readyRows.length} sources`;
+
+  type FlatExcerpt = {
+    globalIndex: number;
+    chunkId: string;
+    sourceId: string;
+    sourceTitle: string;
+    content: string;
+    locator: MessageCitation["locator"];
+  };
+
+  const flat: FlatExcerpt[] = [];
+  const perSource: Array<{
+    title: string;
+    sourceType: string;
+    excerpts: Array<{ text: string; label?: string }>;
+  }> = [];
+
+  let globalIndex = 1;
+  for (const row of readyRows) {
+    const chunkRows = await db
+      .select({
+        id: chunks.id,
+        content: chunks.content,
+        locator: chunks.locator,
+      })
+      .from(chunks)
+      .where(eq(chunks.sourceId, row.id))
+      .orderBy(asc(chunks.chunkIndex));
+
+    const sample = pickSummaryChunks(chunkRows, BATCH_CHUNKS_PER_SOURCE);
+    const excerpts: Array<{ text: string; label?: string }> = [];
+    for (const chunk of sample) {
+      excerpts.push({
+        text: chunk.content.slice(0, EXCERPT_CHAR_LIMIT),
+        label: excerptLabel(chunk.locator),
+      });
+      flat.push({
+        globalIndex,
+        chunkId: chunk.id,
+        sourceId: row.id,
+        sourceTitle: row.title,
+        content: chunk.content,
+        locator: chunk.locator,
+      });
+      globalIndex += 1;
+    }
+    if (excerpts.length > 0) {
+      perSource.push({
+        title: row.title,
+        sourceType: row.type,
+        excerpts,
+      });
+    }
+  }
+
+  if (perSource.length === 0) {
+    return null;
+  }
+
+  const { summary, citedIndexes } = await generateBatchSourcesAddedSummary({
+    batchTitle,
+    sources: perSource,
+  });
+
+  const citations: MessageCitation[] = citedIndexes
+    .map((index) => {
+      const excerpt = flat.find((item) => item.globalIndex === index);
+      if (!excerpt) return null;
+      return {
+        chunkId: excerpt.chunkId,
+        sourceId: excerpt.sourceId,
+        sourceTitle: excerpt.sourceTitle,
+        quote: excerpt.content.slice(0, 280),
+        locator: excerpt.locator ?? {},
+        citationNumber: index,
+      } satisfies MessageCitation;
+    })
+    .filter((item): item is MessageCitation => item != null);
+
+  if (citations.length === 0 && flat[0]) {
+    citations.push({
+      chunkId: flat[0].chunkId,
+      sourceId: flat[0].sourceId,
+      sourceTitle: flat[0].sourceTitle,
+      quote: flat[0].content.slice(0, 280),
+      locator: flat[0].locator ?? {},
+      citationNumber: 1,
+    });
+  }
+
+  const [message] = await db
+    .insert(messages)
+    .values({
+      notebookId,
+      role: "assistant",
+      content: summary,
+      citations,
+    })
+    .returning({ id: messages.id });
+
+  if (!message) {
+    return null;
+  }
+
+  for (const row of batchRows) {
+    const meta =
+      row.metadata && typeof row.metadata === "object"
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {};
+    await db
+      .update(sources)
+      .set({
+        metadata: {
+          ...meta,
+          batchSummaryClaimed: true,
+          summaryMessageId: message.id,
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(sources.id, row.id));
+  }
+
+  await maybeUpdateNotebookDescription({
+    notebookId,
+    sourceTitle: batchTitle,
+    sourceType: "batch",
     summary,
   });
 
@@ -236,6 +521,17 @@ export async function tryPostSourceAddedSummaryMessage(
     return await postSourceAddedSummaryMessage(options);
   } catch (error) {
     console.error("[source-summary]", options.sourceId, error);
+    return null;
+  }
+}
+
+export async function tryFinalizeImportBatchSummarySafe(
+  options: Parameters<typeof tryFinalizeImportBatchSummary>[0],
+) {
+  try {
+    return await tryFinalizeImportBatchSummary(options);
+  } catch (error) {
+    console.error("[batch-summary]", options.importBatchId, error);
     return null;
   }
 }

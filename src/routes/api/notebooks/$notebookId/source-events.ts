@@ -1,11 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 
 import { db } from "#/db/index.ts";
+import { messages } from "#/db/schema/messages.ts";
 import { sources } from "#/db/schema/sources.ts";
+import type { ChatMessageDTO } from "#/features/chat/chat.types.ts";
 import type { SourceDTO } from "#/features/sources/sources.functions.ts";
 import { requireOwnedNotebook } from "#/features/sources/notebook-access.server.ts";
 import type { IndexProgress } from "#/lib/rag/index-source.server.ts";
+
+/** How long to keep SSE open after indexing so a delayed batch overview can land. */
+const OVERVIEW_GRACE_MS = 90_000;
 
 function readMetaNumber(metadata: unknown, key: string): number | null {
   if (!metadata || typeof metadata !== "object") return null;
@@ -50,6 +55,30 @@ function toSourceDTO(row: typeof sources.$inferSelect): SourceDTO {
   };
 }
 
+function toMessageDTO(row: typeof messages.$inferSelect): ChatMessageDTO {
+  return {
+    id: row.id,
+    notebookId: row.notebookId,
+    role: row.role,
+    content: row.content,
+    citations: row.citations ?? [],
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** Playlist/batch overview is written after the last source flips to ready. */
+function isAwaitingBatchOverview(row: typeof sources.$inferSelect): boolean {
+  if (row.status !== "ready" && row.status !== "failed") return false;
+  const meta =
+    row.metadata && typeof row.metadata === "object"
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+  if (meta.suppressSourceSummary === true) return false;
+  if (typeof meta.importBatchId !== "string") return false;
+  if (typeof meta.summaryMessageId === "string") return false;
+  return true;
+}
+
 export const Route = createFileRoute(
   "/api/notebooks/$notebookId/source-events",
 )({
@@ -65,6 +94,7 @@ export const Route = createFileRoute(
         const encoder = new TextEncoder();
         let closed = false;
         let timer: ReturnType<typeof setTimeout> | undefined;
+        let settledAt: number | null = null;
 
         const stream = new ReadableStream({
           start(controller) {
@@ -79,17 +109,32 @@ export const Route = createFileRoute(
               if (closed) return;
 
               try {
-                const rows = await db
-                  .select()
-                  .from(sources)
-                  .where(eq(sources.notebookId, params.notebookId))
-                  .orderBy(desc(sources.createdAt));
+                const [sourceRows, messageRows] = await Promise.all([
+                  db
+                    .select()
+                    .from(sources)
+                    .where(eq(sources.notebookId, params.notebookId))
+                    .orderBy(desc(sources.createdAt)),
+                  db
+                    .select()
+                    .from(messages)
+                    .where(eq(messages.notebookId, params.notebookId))
+                    .orderBy(asc(messages.createdAt)),
+                ]);
 
-                const items = rows.map(toSourceDTO);
+                const items = sourceRows.map(toSourceDTO);
+                const chat = messageRows.map(toMessageDTO);
                 const pending = items.some(
                   (item) =>
                     item.status === "uploading" || item.status === "indexing",
                 );
+                const awaitingOverview = sourceRows.some(isAwaitingBatchOverview);
+
+                if (pending) {
+                  settledAt = null;
+                } else if (settledAt == null) {
+                  settledAt = Date.now();
+                }
 
                 send({
                   type: "sources",
@@ -97,8 +142,17 @@ export const Route = createFileRoute(
                   pending,
                   at: new Date().toISOString(),
                 });
+                send({
+                  type: "messages",
+                  messages: chat,
+                  at: new Date().toISOString(),
+                });
 
-                if (!pending) {
+                const graceExpired =
+                  settledAt != null &&
+                  Date.now() - settledAt >= OVERVIEW_GRACE_MS;
+
+                if (!pending && (!awaitingOverview || graceExpired)) {
                   send({ type: "done" });
                   closed = true;
                   controller.close();
