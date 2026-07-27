@@ -3,6 +3,8 @@
 NotebookLM-style research assistant: create notebooks, add sources (PDF, text, websites, YouTube, VTT), ask grounded questions, and jump from citations back into the original material.
 
 **Architecture (diagrams):** [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+Web link https://workbench.harshlocham.dev
+demo link https://www.loom.com/share/2988659fdf7e4e8d92601c88313a9405
 
 ## Stack
 
