@@ -2,252 +2,249 @@ import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 
 export type ExtractedUrlArticle = {
-  title: string;
-  canonicalUrl: string;
-  content: string;
-  excerpt: string | null;
-  siteName: string | null;
-  headings: string[];
+	title: string;
+	canonicalUrl: string;
+	content: string;
+	excerpt: string | null;
+	siteName: string | null;
+	headings: string[];
 };
 
 function normalizeUrl(input: string) {
-  const trimmed = input.trim();
-  const withProtocol = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`;
-  return new URL(withProtocol).toString();
+	const trimmed = input.trim();
+	const withProtocol = /^https?:\/\//i.test(trimmed)
+		? trimmed
+		: `https://${trimmed}`;
+	return new URL(withProtocol).toString();
 }
 
 function htmlToPlainText(html: string): { text: string; headings: string[] } {
-  // linkedom needs a full document shell; a bare <body> fragment leaves content outside body.
-  const { document, Node } = parseHTML(
-    `<html><body>${html}</body></html>`,
-  );
-  const body = document.body;
-  const headings: string[] = [];
-  const parts: string[] = [];
+	// linkedom needs a full document shell; a bare <body> fragment leaves content outside body.
+	const { document, Node } = parseHTML(`<html><body>${html}</body></html>`);
+	const body = document.body;
+	const headings: string[] = [];
+	const parts: string[] = [];
 
-  const walk = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const value = node.textContent?.replace(/\s+/g, " ").trim();
-      if (value) {
-        parts.push(value);
-      }
-      return;
-    }
+	const walk = (node: Node) => {
+		if (node.nodeType === Node.TEXT_NODE) {
+			const value = node.textContent?.replace(/\s+/g, " ").trim();
+			if (value) {
+				parts.push(value);
+			}
+			return;
+		}
 
-    if (node.nodeType !== Node.ELEMENT_NODE) {
-      return;
-    }
+		if (node.nodeType !== Node.ELEMENT_NODE) {
+			return;
+		}
 
-    const el = node as Element;
-    const tag = el.tagName.toLowerCase();
+		const el = node as Element;
+		const tag = el.tagName.toLowerCase();
 
-    if (["script", "style", "noscript"].includes(tag)) {
-      return;
-    }
+		if (["script", "style", "noscript"].includes(tag)) {
+			return;
+		}
 
-    if (/^h[1-6]$/.test(tag)) {
-      const heading = el.textContent?.replace(/\s+/g, " ").trim();
-      if (heading) {
-        headings.push(heading);
-        parts.push(`\n\n## ${heading}\n\n`);
-      }
-      return;
-    }
+		if (/^h[1-6]$/.test(tag)) {
+			const heading = el.textContent?.replace(/\s+/g, " ").trim();
+			if (heading) {
+				headings.push(heading);
+				parts.push(`\n\n## ${heading}\n\n`);
+			}
+			return;
+		}
 
-    if (["p", "div", "section", "article", "li", "br", "tr"].includes(tag)) {
-      parts.push("\n\n");
-    }
+		if (["p", "div", "section", "article", "li", "br", "tr"].includes(tag)) {
+			parts.push("\n\n");
+		}
 
-    for (const child of Array.from(el.childNodes)) {
-      walk(child);
-    }
-  };
+		for (const child of Array.from(el.childNodes)) {
+			walk(child);
+		}
+	};
 
-  walk(body);
+	walk(body);
 
-  const text = parts
-    .join(" ")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
+	const text = parts
+		.join(" ")
+		.replace(/[ \t]+\n/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.replace(/[ \t]{2,}/g, " ")
+		.trim();
 
-  return { text, headings };
+	return { text, headings };
 }
 
 /** Fetch a page and extract readable article content via Mozilla Readability. */
 export async function extractUrlArticle(
-  rawUrl: string,
+	rawUrl: string,
 ): Promise<ExtractedUrlArticle> {
-  const url = normalizeUrl(rawUrl);
+	const url = normalizeUrl(rawUrl);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 20_000);
 
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        "User-Agent":
-          "KnowledgeWorkbenchBot/1.0 (+https://localhost; research assistant)",
-        Accept: "text/html,application/xhtml+xml",
-      },
-    });
-  } catch (error) {
-    clearTimeout(timeout);
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("Timed out while fetching the URL");
-    }
-    throw new Error(
-      error instanceof Error ? error.message : "Failed to fetch URL",
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
+	let response: Response;
+	try {
+		response = await fetch(url, {
+			redirect: "follow",
+			signal: controller.signal,
+			headers: {
+				"User-Agent":
+					"KnowledgeWorkbenchBot/1.0 (+https://localhost; research assistant)",
+				Accept: "text/html,application/xhtml+xml",
+			},
+		});
+	} catch (error) {
+		clearTimeout(timeout);
+		if (error instanceof Error && error.name === "AbortError") {
+			throw new Error("Timed out while fetching the URL");
+		}
+		throw new Error(
+			error instanceof Error ? error.message : "Failed to fetch URL",
+		);
+	} finally {
+		clearTimeout(timeout);
+	}
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch URL (HTTP ${response.status})`);
-  }
+	if (!response.ok) {
+		throw new Error(`Failed to fetch URL (HTTP ${response.status})`);
+	}
 
-  const contentType = response.headers.get("content-type") ?? "";
-  if (
-    contentType &&
-    !contentType.includes("text/html") &&
-    !contentType.includes("application/xhtml")
-  ) {
-    throw new Error("URL did not return an HTML page");
-  }
+	const contentType = response.headers.get("content-type") ?? "";
+	if (
+		contentType &&
+		!contentType.includes("text/html") &&
+		!contentType.includes("application/xhtml")
+	) {
+		throw new Error("URL did not return an HTML page");
+	}
 
-  const html = await response.text();
-  const { document } = parseHTML(html);
-  // Readability uses document.baseURI for relative URL resolution.
-  Object.defineProperty(document, "baseURI", {
-    configurable: true,
-    value: url,
-  });
-  if (!document.documentURI) {
-    Object.defineProperty(document, "documentURI", {
-      configurable: true,
-      value: url,
-    });
-  }
+	const html = await response.text();
+	const { document } = parseHTML(html);
+	// Readability uses document.baseURI for relative URL resolution.
+	Object.defineProperty(document, "baseURI", {
+		configurable: true,
+		value: url,
+	});
+	if (!document.documentURI) {
+		Object.defineProperty(document, "documentURI", {
+			configurable: true,
+			value: url,
+		});
+	}
 
-  const reader = new Readability(document as unknown as Document);
-  const article = reader.parse();
+	const reader = new Readability(document as unknown as Document);
+	const article = reader.parse();
 
-  let text = "";
-  let headings: string[] = [];
-  let title =
-    article?.title?.trim() || document.title?.trim() || "";
-  let excerpt = article?.excerpt?.trim() || null;
-  let siteName = article?.siteName?.trim() || null;
+	let text = "";
+	let headings: string[] = [];
+	let title = article?.title?.trim() || document.title?.trim() || "";
+	let excerpt = article?.excerpt?.trim() || null;
+	let siteName = article?.siteName?.trim() || null;
 
-  if (article?.content?.trim()) {
-    ({ text, headings } = htmlToPlainText(article.content));
-  } else if (article?.textContent?.trim()) {
-    text = article.textContent.trim();
-  }
+	if (article?.content?.trim()) {
+		({ text, headings } = htmlToPlainText(article.content));
+	} else if (article?.textContent?.trim()) {
+		text = article.textContent.trim();
+	}
 
-  // Tutorial / docs sites (e.g. GeeksforGeeks) often fail Readability.
-  // Fall back to common main-content selectors, then a cleaned body.
-  if (!text.trim()) {
-    const fallback = extractFallbackArticle(document);
-    if (fallback) {
-      text = fallback.text;
-      headings = fallback.headings;
-      title = title || fallback.title;
-    }
-  }
+	// Tutorial / docs sites (e.g. GeeksforGeeks) often fail Readability.
+	// Fall back to common main-content selectors, then a cleaned body.
+	if (!text.trim()) {
+		const fallback = extractFallbackArticle(document);
+		if (fallback) {
+			text = fallback.text;
+			headings = fallback.headings;
+			title = title || fallback.title;
+		}
+	}
 
-  if (!text.trim()) {
-    throw new Error("Could not extract readable article content from URL");
-  }
+	if (!text.trim()) {
+		throw new Error("Could not extract readable article content from URL");
+	}
 
-  const canonical =
-    document.querySelector('link[rel="canonical"]')?.getAttribute("href") ??
-    response.url ??
-    url;
+	const canonical =
+		document.querySelector('link[rel="canonical"]')?.getAttribute("href") ??
+		response.url ??
+		url;
 
-  let canonicalUrl = url;
-  try {
-    canonicalUrl = new URL(canonical, url).toString();
-  } catch {
-    canonicalUrl = url;
-  }
+	let canonicalUrl = url;
+	try {
+		canonicalUrl = new URL(canonical, url).toString();
+	} catch {
+		canonicalUrl = url;
+	}
 
-  return {
-    title: title || canonicalUrl,
-    canonicalUrl,
-    content: text,
-    excerpt,
-    siteName,
-    headings,
-  };
+	return {
+		title: title || canonicalUrl,
+		canonicalUrl,
+		content: text,
+		excerpt,
+		siteName,
+		headings,
+	};
 }
 
 const FALLBACK_CONTENT_SELECTORS = [
-  "article",
-  "[role='main']",
-  "main",
-  ".article--viewer_content",
-  ".article--viewer",
-  ".entry-content",
-  ".post-content",
-  ".article_content",
-  "#content",
-  ".content",
+	"article",
+	"[role='main']",
+	"main",
+	".article--viewer_content",
+	".article--viewer",
+	".entry-content",
+	".post-content",
+	".article_content",
+	"#content",
+	".content",
 ];
 
 const MIN_FALLBACK_CHARS = 280;
 
 function extractFallbackArticle(document: Document): {
-  text: string;
-  headings: string[];
-  title: string;
+	text: string;
+	headings: string[];
+	title: string;
 } | null {
-  for (const selector of FALLBACK_CONTENT_SELECTORS) {
-    const el = document.querySelector(selector);
-    if (!el) continue;
-    const { text, headings } = htmlToPlainText(el.innerHTML);
-    if (text.trim().length >= MIN_FALLBACK_CHARS) {
-      return {
-        text: text.trim(),
-        headings,
-        title: document.title?.trim() || "",
-      };
-    }
-  }
+	for (const selector of FALLBACK_CONTENT_SELECTORS) {
+		const el = document.querySelector(selector);
+		if (!el) continue;
+		const { text, headings } = htmlToPlainText(el.innerHTML);
+		if (text.trim().length >= MIN_FALLBACK_CHARS) {
+			return {
+				text: text.trim(),
+				headings,
+				title: document.title?.trim() || "",
+			};
+		}
+	}
 
-  // Last resort: strip obvious chrome, then take body text.
-  const clone = document.body?.cloneNode(true) as Element | null;
-  if (!clone) return null;
-  for (const sel of [
-    "script",
-    "style",
-    "noscript",
-    "nav",
-    "header",
-    "footer",
-    "aside",
-    "iframe",
-  ]) {
-    for (const node of Array.from(clone.querySelectorAll(sel))) {
-      node.remove();
-    }
-  }
-  const { text, headings } = htmlToPlainText(clone.innerHTML);
-  if (text.trim().length < MIN_FALLBACK_CHARS) {
-    return null;
-  }
-  return {
-    text: text.trim(),
-    headings,
-    title: document.title?.trim() || "",
-  };
+	// Last resort: strip obvious chrome, then take body text.
+	const clone = document.body?.cloneNode(true) as Element | null;
+	if (!clone) return null;
+	for (const sel of [
+		"script",
+		"style",
+		"noscript",
+		"nav",
+		"header",
+		"footer",
+		"aside",
+		"iframe",
+	]) {
+		for (const node of Array.from(clone.querySelectorAll(sel))) {
+			node.remove();
+		}
+	}
+	const { text, headings } = htmlToPlainText(clone.innerHTML);
+	if (text.trim().length < MIN_FALLBACK_CHARS) {
+		return null;
+	}
+	return {
+		text: text.trim(),
+		headings,
+		title: document.title?.trim() || "",
+	};
 }
 
 export { normalizeUrl };

@@ -45,7 +45,10 @@ export function friendlyIngestError(error: unknown, fallback: string) {
 	if (lower.includes("playlist")) {
 		return message;
 	}
-	if (lower.includes("youtube_proxy") || lower.includes("verify:youtube-proxy")) {
+	if (
+		lower.includes("youtube_proxy") ||
+		lower.includes("verify:youtube-proxy")
+	) {
 		return message;
 	}
 	if (lower.includes("youtube") && lower.includes("blocked")) {

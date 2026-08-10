@@ -76,10 +76,7 @@ Rules:
 	];
 }
 
-function citedIndexesFromAnswer(
-	answer: string,
-	contexts: RetrievedContext[],
-) {
+function citedIndexesFromAnswer(answer: string, contexts: RetrievedContext[]) {
 	return [
 		...new Set(
 			[...answer.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])),
@@ -418,7 +415,9 @@ export async function generateBatchSourcesAddedSummary(options: {
 		.join("\n\n");
 
 	const sourceList = batchSources
-		.map((source, index) => `${index + 1}. ${source.title} (${source.sourceType})`)
+		.map(
+			(source, index) => `${index + 1}. ${source.title} (${source.sourceType})`,
+		)
 		.join("\n");
 
 	const client = getOpenAIClient();

@@ -3,9 +3,9 @@ import { FileSearch, Minimize2 } from "lucide-react";
 import { EmptyState } from "#/components/layout/EmptyState.tsx";
 import { HighlightedText } from "#/components/notebook/source-viewer/highlighted-text.tsx";
 import {
-  type CitationNavItem,
-  SourceViewerPanel,
-  type ViewerSource,
+	type CitationNavItem,
+	SourceViewerPanel,
+	type ViewerSource,
 } from "#/components/notebook/source-viewer-panel.tsx";
 import { Button } from "#/components/ui/button.tsx";
 

@@ -528,10 +528,7 @@ export function NotebookWorkspace({
 				const createdSources = result.sources;
 				setSources((prev) => {
 					const ids = new Set(createdSources.map((s) => s.id));
-					return [
-						...createdSources,
-						...prev.filter((s) => !ids.has(s.id)),
-					];
+					return [...createdSources, ...prev.filter((s) => !ids.has(s.id))];
 				});
 				return;
 			}
