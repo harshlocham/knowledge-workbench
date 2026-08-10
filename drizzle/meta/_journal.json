@@ -15,6 +15,13 @@
       "when": 1785360000000,
       "tag": "0001_chunks_search_vector",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786387426927,
+      "tag": "0002_artifacts",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,12 @@
 export { notebooks } from "./notebooks.ts";
 export {
+	artifacts,
+	artifactStatusEnum,
+	artifactTypeEnum,
+	type ArtifactContent,
+	type ArtifactSection,
+} from "./artifacts.ts";
+export {
 	chunks,
 	type ChunkLocator,
 } from "./chunks.ts";
