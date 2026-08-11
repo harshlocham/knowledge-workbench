@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { useBillingOptional } from "#/components/billing/BillingProvider.tsx";
 import { Button } from "#/components/ui/button.tsx";
 import { CitationChips } from "#/components/workspace/CitationChips.tsx";
 import { ArtifactSectionsView } from "#/components/workspace/studio/ArtifactSectionsView.tsx";
@@ -58,6 +59,8 @@ export function ArtifactDocument({
 	/** Optional: keep list/detail `isShared` in sync after share create/revoke. */
 	onArtifactPatch?: (patch: Partial<ArtifactDTO>) => void;
 }) {
+	const billing = useBillingOptional();
+	const isPro = billing?.isPro ?? false;
 	const [copied, setCopied] = useState(false);
 	const [copyFailed, setCopyFailed] = useState(false);
 	const [shareOpen, setShareOpen] = useState(false);
@@ -71,6 +74,10 @@ export function ArtifactDocument({
 	});
 
 	async function handleCopy() {
+		if (!isPro) {
+			billing?.openUpgrade("export");
+			return;
+		}
 		try {
 			await navigator.clipboard.writeText(markdown);
 			setCopied(true);
@@ -83,10 +90,22 @@ export function ArtifactDocument({
 	}
 
 	function handleDownload() {
+		if (!isPro) {
+			billing?.openUpgrade("export");
+			return;
+		}
 		downloadMarkdown(
 			artifactMarkdownFilename(artifact.title, artifact.type),
 			markdown,
 		);
+	}
+
+	function handleShareClick() {
+		if (!isPro) {
+			billing?.openUpgrade("share");
+			return;
+		}
+		setShareOpen(true);
 	}
 
 	const exportDisabled = artifact.status !== "ready" || !artifact.content;
@@ -136,7 +155,7 @@ export function ArtifactDocument({
 						type="button"
 						variant="outline"
 						size="sm"
-						onClick={() => setShareOpen(true)}
+						onClick={handleShareClick}
 						disabled={artifact.status !== "ready"}
 					>
 						<Link2 />

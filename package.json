@@ -22,6 +22,8 @@
     "test:url": "bun run scripts/test-url-extraction.ts",
     "test:compare": "bun run scripts/test-compare-sources.ts",
     "test:export-share": "bun run scripts/test-artifact-export-share.ts",
+    "test:plan-limits": "bun run scripts/test-plan-limits.ts",
+    "grant:plan": "bun run scripts/grant-plan.ts",
     "inspect:url": "bun run scripts/inspect-url.ts",
     "verify:youtube-proxy": "bun run scripts/verify-youtube-proxy.ts"
   },

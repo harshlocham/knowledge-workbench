@@ -16,6 +16,7 @@ import {
 	createShareToken,
 	isShareTokenShape,
 } from "#/lib/artifacts/share-token.ts";
+import { assertProFeature } from "#/lib/plans/plan.server.ts";
 
 export type ArtifactShareLink = {
 	shared: true;
@@ -62,7 +63,8 @@ export const getArtifactShare = createServerFn({ method: "GET" })
 export const createArtifactShare = createServerFn({ method: "POST" })
 	.validator(z.object({ artifactId: z.string().uuid() }))
 	.handler(async ({ data }): Promise<ArtifactShareLink> => {
-		const { artifact } = await requireOwnedArtifact(data.artifactId);
+		const { userId, artifact } = await requireOwnedArtifact(data.artifactId);
+		await assertProFeature(userId, "Artifact sharing");
 		assertArtifactShareable(artifact.status);
 
 		if (artifact.shareToken) {

@@ -31,3 +31,14 @@ export {
 	sources,
 	sourceTypeEnum,
 } from "./sources.ts";
+export {
+	UPGRADE_INTENT_SOURCES,
+	type UpgradeIntentSource,
+	upgradeIntents,
+} from "./upgrade-intents.ts";
+export {
+	USAGE_KINDS,
+	type UsageKind,
+	usageEvents,
+} from "./usage-events.ts";
+export { userPlanEnum, userPlans } from "./user-plans.ts";

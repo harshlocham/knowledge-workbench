@@ -1,12 +1,15 @@
-import { createServerFn } from "@tanstack/react-start";
 import { notFound } from "@tanstack/react-router";
-import { and, desc, eq } from "drizzle-orm";
+import { createServerFn } from "@tanstack/react-start";
+import { and, count, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "#/db/index.ts";
 import { notebooks } from "#/db/schema/notebooks.ts";
 import { sources } from "#/db/schema/sources.ts";
 import { getOptionalUserId, requireUserId } from "#/lib/auth.server.ts";
+import { AppError } from "#/lib/errors.ts";
+import { assertNotebookCountAllowed } from "#/lib/plans/limits.ts";
+import { getUserPlanLimits } from "#/lib/plans/plan.server.ts";
 import { deletePointsByNotebookId } from "#/lib/qdrant/points.ts";
 import { deleteSourceFile } from "#/lib/storage/files.server.ts";
 
@@ -78,6 +81,23 @@ export const createNotebook = createServerFn({ method: "POST" })
 	)
 	.handler(async ({ data }) => {
 		const userId = await requireUserId();
+		const { plan, limits } = await getUserPlanLimits(userId);
+
+		const [countRow] = await db
+			.select({ value: count() })
+			.from(notebooks)
+			.where(eq(notebooks.ownerId, userId));
+
+		try {
+			assertNotebookCountAllowed(
+				countRow?.value ?? 0,
+				limits.maxNotebooks,
+				plan,
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			throw new AppError("NOTEBOOK_LIMIT", message);
+		}
 
 		const [row] = await db
 			.insert(notebooks)

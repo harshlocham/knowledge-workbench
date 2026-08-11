@@ -1,5 +1,5 @@
-import { createServerFn } from "@tanstack/react-start";
 import { notFound } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
 import { and, count, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
@@ -17,7 +17,7 @@ import {
 } from "#/lib/ingest/limits.ts";
 import {
 	assertCreateRateLimit,
-	assertNotebookSourceCapacity,
+	assertNotebookSourceCapacityForUser,
 } from "#/lib/ingest/rate-limit.server.ts";
 import { normalizeUrl } from "#/lib/rag/extract-url.server.ts";
 import {
@@ -26,12 +26,11 @@ import {
 	youtubeWatchUrl,
 } from "#/lib/rag/extract-youtube.server.ts";
 import { extractYoutubePlaylist } from "#/lib/rag/extract-youtube-playlist.server.ts";
-import { isYoutubePlaylistUrl } from "#/lib/rag/youtube-url.ts";
 import { indexPdfSource } from "#/lib/rag/index-pdf-source.server.ts";
 import {
 	clearSourceIndex,
-	setSourceStatus,
 	type IndexProgress,
+	setSourceStatus,
 } from "#/lib/rag/index-source.server.ts";
 import {
 	indexTextSource,
@@ -41,6 +40,7 @@ import {
 import { indexUrlSource } from "#/lib/rag/index-url-source.server.ts";
 import { indexVttSource } from "#/lib/rag/index-vtt-source.server.ts";
 import { indexYoutubeSource } from "#/lib/rag/index-youtube-source.server.ts";
+import { isYoutubePlaylistUrl } from "#/lib/rag/youtube-url.ts";
 import {
 	deleteSourceFile,
 	pdfStorageKey,
@@ -135,7 +135,7 @@ async function refreshSource(sourceId: string) {
 async function beginCreate(notebookId: string) {
 	const { userId } = await requireOwnedNotebook(notebookId);
 	assertCreateRateLimit(userId);
-	await assertNotebookSourceCapacity(notebookId);
+	await assertNotebookSourceCapacityForUser(userId, notebookId);
 
 	const [row] = await db
 		.select({ value: count() })
@@ -490,7 +490,8 @@ export const createYoutubeSource = createServerFn({ method: "POST" })
 		if (isYoutubePlaylistUrl(data.url)) {
 			const playlist = await extractYoutubePlaylist(data.url);
 			// beginCreate already reserved 1 slot mentally; re-check for full playlist.
-			await assertNotebookSourceCapacity(
+			await assertNotebookSourceCapacityForUser(
+				userId,
 				data.notebookId,
 				playlist.videos.length,
 			);

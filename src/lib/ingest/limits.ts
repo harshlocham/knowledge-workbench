@@ -21,6 +21,17 @@ export function formatBytes(bytes: number) {
 }
 
 export function friendlyIngestError(error: unknown, fallback: string) {
+	const fromApp = /^\[([A-Z_]+)\]\s*(.*)$/s.exec(
+		error instanceof Error
+			? error.message
+			: typeof error === "string"
+				? error
+				: "",
+	);
+	if (fromApp?.[1] === "SOURCE_LIMIT" && fromApp[2]) {
+		return fromApp[2].trim();
+	}
+
 	const message =
 		error instanceof Error
 			? error.message

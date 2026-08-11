@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { BookOpen, LoaderCircle, Plus, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 
+import { useBilling } from "#/components/billing/BillingProvider.tsx";
 import { NotebookCard } from "#/components/dashboard/NotebookCard.tsx";
 import { EmptyState } from "#/components/layout/EmptyState.tsx";
 import { NotebookCardSkeleton } from "#/components/layout/LoadingSkeleton.tsx";
@@ -14,6 +15,7 @@ import {
 	deleteNotebook,
 	type NotebookDTO,
 } from "#/features/notebooks/notebooks.functions.ts";
+import { isLimitOrProError, parseAppError } from "#/lib/errors.ts";
 
 export function NotebooksDashboard({
 	notebooks,
@@ -23,6 +25,7 @@ export function NotebooksDashboard({
 	pending?: boolean;
 }) {
 	const router = useRouter();
+	const billing = useBilling();
 	const createNotebookFn = useServerFn(createNotebook);
 	const deleteNotebookFn = useServerFn(deleteNotebook);
 
@@ -55,9 +58,11 @@ export function NotebooksDashboard({
 				params: { notebookId: notebook.id },
 			});
 		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to create notebook",
-			);
+			const parsed = parseAppError(err);
+			setError(parsed.message || "Failed to create notebook");
+			if (isLimitOrProError(parsed.code)) {
+				billing.openUpgrade("general_upgrade");
+			}
 			setIsCreating(false);
 		}
 	}
@@ -126,8 +131,8 @@ export function NotebooksDashboard({
 
 				{pending ? (
 					<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-						{Array.from({ length: 6 }).map((_, i) => (
-							<NotebookCardSkeleton key={i} />
+						{["s0", "s1", "s2", "s3", "s4", "s5"].map((id) => (
+							<NotebookCardSkeleton key={id} />
 						))}
 					</div>
 				) : notebooks.length === 0 ? (
