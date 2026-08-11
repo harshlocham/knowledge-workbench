@@ -8,11 +8,9 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "#/components/ui/tabs.tsx";
-import type { ResearchStudioPanelProps } from "#/components/workspace/studio/ResearchStudioPanel.tsx";
 import { LearnTab } from "#/components/workspace/tabs/LearnTab.tsx";
 import { MetadataTab } from "#/components/workspace/tabs/MetadataTab.tsx";
 import { SourceTab } from "#/components/workspace/tabs/SourceTab.tsx";
-import { StudioTab } from "#/components/workspace/tabs/StudioTab.tsx";
 import { SummaryTab } from "#/components/workspace/tabs/SummaryTab.tsx";
 import type { MessageCitation } from "#/db/schema/messages.ts";
 import type { ChatMessageDTO } from "#/features/chat/chat.functions.ts";
@@ -20,7 +18,7 @@ import type { NotebookDTO } from "#/features/notebooks/notebooks.functions.ts";
 import type { LearningRoadmap } from "#/features/roadmap/roadmap.functions.ts";
 import type { SourceDTO } from "#/features/sources/sources.functions.ts";
 
-export type ToolsTab = "source" | "summary" | "studio" | "learn" | "metadata";
+export type ToolsTab = "source" | "summary" | "learn" | "metadata";
 
 export function ViewerTabs({
 	tab,
@@ -51,7 +49,6 @@ export function ViewerTabs({
 	roadmapError,
 	onGenerateRoadmap,
 	onOpenClip,
-	studio,
 }: {
 	tab: ToolsTab;
 	onTabChange: (tab: ToolsTab) => void;
@@ -81,7 +78,6 @@ export function ViewerTabs({
 	roadmapError: string | null;
 	onGenerateRoadmap: () => void;
 	onOpenClip: (citation: MessageCitation) => void;
-	studio: ResearchStudioPanelProps;
 }) {
 	return (
 		<Tabs
@@ -96,9 +92,6 @@ export function ViewerTabs({
 					</TabsTrigger>
 					<TabsTrigger value="summary" className="text-xs">
 						Summary
-					</TabsTrigger>
-					<TabsTrigger value="studio" className="text-xs">
-						Studio
 					</TabsTrigger>
 					<TabsTrigger value="learn" className="text-xs">
 						Learn
@@ -135,12 +128,6 @@ export function ViewerTabs({
 				className="mt-0 min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
 			>
 				<SummaryTab notebook={notebook} sources={sources} messages={messages} />
-			</TabsContent>
-			<TabsContent
-				value="studio"
-				className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
-			>
-				<StudioTab {...studio} />
 			</TabsContent>
 			<TabsContent
 				value="learn"

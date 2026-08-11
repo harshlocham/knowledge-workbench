@@ -6,16 +6,18 @@ import { NotebookWorkspace } from "#/components/workspace/NotebookWorkspace.tsx"
 import { listMessages } from "#/features/chat/chat.functions.ts";
 import { getNotebook } from "#/features/notebooks/notebooks.functions.ts";
 import { listSources } from "#/features/sources/sources.functions.ts";
+import { listArtifacts } from "#/features/studio/artifacts.functions.ts";
 
 export const Route = createFileRoute("/_authenticated/notebooks/$notebookId")({
 	loader: async ({ params }) => {
-		const [notebook, sources, messages] = await Promise.all([
+		const [notebook, sources, messages, artifacts] = await Promise.all([
 			getNotebook({ data: { id: params.notebookId } }),
 			listSources({ data: { notebookId: params.notebookId } }),
 			listMessages({ data: { notebookId: params.notebookId } }),
+			listArtifacts({ data: { notebookId: params.notebookId } }),
 		]);
 
-		return { notebook, sources, messages };
+		return { notebook, sources, messages, artifacts };
 	},
 	pendingComponent: WorkspacePending,
 	component: NotebookWorkspacePage,
@@ -31,12 +33,13 @@ function WorkspacePending() {
 }
 
 function NotebookWorkspacePage() {
-	const { notebook, sources, messages } = Route.useLoaderData();
+	const { notebook, sources, messages, artifacts } = Route.useLoaderData();
 	return (
 		<NotebookWorkspace
 			notebook={notebook}
 			initialSources={sources}
 			initialMessages={messages}
+			initialArtifacts={artifacts}
 		/>
 	);
 }

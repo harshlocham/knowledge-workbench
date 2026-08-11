@@ -22,12 +22,20 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "#/components/ui/sheet.tsx";
+import {
+	Tabs,
+	TabsContent,
+	TabsList,
+	TabsTrigger,
+} from "#/components/ui/tabs.tsx";
 import { AddSourceSheet } from "#/components/workspace/AddSourceSheet.tsx";
 import { ChatPanel } from "#/components/workspace/ChatPanel.tsx";
 import { EditableNotebookTitle } from "#/components/workspace/EditableNotebookTitle.tsx";
 import { KnowledgeToolsPanel } from "#/components/workspace/KnowledgeToolsPanel.tsx";
 import { citationKey } from "#/components/workspace/MarkdownWithCitations.tsx";
 import { SourcesSidebar } from "#/components/workspace/SourcesSidebar.tsx";
+import type { StudioArtifactType } from "#/components/workspace/studio/ArtifactTypeCards.tsx";
+import { StudioPanel } from "#/components/workspace/studio/StudioPanel.tsx";
 import type { ToolsTab } from "#/components/workspace/ViewerTabs.tsx";
 import type { MessageCitation } from "#/db/schema/messages.ts";
 import {
@@ -35,7 +43,6 @@ import {
 	getSourceViewer,
 	listMessages,
 } from "#/features/chat/chat.functions.ts";
-import { askNotebookStream } from "#/lib/chat/ask-stream.ts";
 import {
 	type NotebookDTO,
 	updateNotebook,
@@ -55,16 +62,15 @@ import {
 	reindexSource,
 	type SourceDTO,
 } from "#/features/sources/sources.functions.ts";
-import {
-	getArtifact,
-	listArtifacts,
-} from "#/features/studio/artifacts.functions.ts";
+import { getArtifact } from "#/features/studio/artifacts.functions.ts";
 import type {
 	ArtifactDTO,
 	ArtifactSummaryDTO,
 } from "#/features/studio/artifacts.types.ts";
 import { generateResearchBriefArtifact } from "#/features/studio/research-brief.functions.ts";
+import { generateStudyGuideArtifact } from "#/features/studio/study-guide.functions.ts";
 import { useWorkspaceLayout } from "#/hooks/use-workspace-layout.ts";
+import { askNotebookStream } from "#/lib/chat/ask-stream.ts";
 import { fileToBase64 } from "#/lib/file-to-base64.ts";
 import {
 	formatBytes,
@@ -79,12 +85,15 @@ import {
 	shouldAutoUpdateNotebookDescription,
 } from "#/lib/notebook-title.ts";
 
+/** The center workspace is either the chat thread or the Research Studio. */
+type CenterMode = "chat" | "studio";
+
 function isPendingStatus(status: SourceDTO["status"]) {
 	return status === "uploading" || status === "indexing";
 }
 
-/** Optimistic list row for a brief we just created, before the list refreshes. */
-function toBriefSummary(artifact: ArtifactDTO): ArtifactSummaryDTO {
+/** Optimistic list row for an artifact we just created, before the loader refreshes. */
+function toArtifactSummary(artifact: ArtifactDTO): ArtifactSummaryDTO {
 	const { content, citations, ...rest } = artifact;
 	return {
 		...rest,
@@ -97,10 +106,12 @@ export function NotebookWorkspace({
 	notebook,
 	initialSources,
 	initialMessages,
+	initialArtifacts,
 }: {
 	notebook: NotebookDTO;
 	initialSources: SourceDTO[];
 	initialMessages: ChatMessageDTO[];
+	initialArtifacts: ArtifactSummaryDTO[];
 }) {
 	const router = useRouter();
 	const layout = useWorkspaceLayout();
@@ -117,14 +128,15 @@ export function NotebookWorkspace({
 	const getSourceViewerFn = useServerFn(getSourceViewer);
 	const buildLearningRoadmapFn = useServerFn(buildLearningRoadmap);
 	const updateNotebookFn = useServerFn(updateNotebook);
-	const listArtifactsFn = useServerFn(listArtifacts);
 	const getArtifactFn = useServerFn(getArtifact);
 	const generateResearchBriefFn = useServerFn(generateResearchBriefArtifact);
+	const generateStudyGuideFn = useServerFn(generateStudyGuideArtifact);
 
 	const [notebookState, setNotebookState] = useState(notebook);
 	const [sources, setSources] = useState(initialSources);
 	const [messages, setMessages] = useState(initialMessages);
 	const [toolsTab, setToolsTab] = useState<ToolsTab>("source");
+	const [centerMode, setCenterMode] = useState<CenterMode>("chat");
 	const [addSourcesOpen, setAddSourcesOpen] = useState(
 		() => initialSources.length === 0,
 	);
@@ -148,14 +160,18 @@ export function NotebookWorkspace({
 	const [isGeneratingRoadmap, setIsGeneratingRoadmap] = useState(false);
 	const [roadmapError, setRoadmapError] = useState<string | null>(null);
 
-	const [briefs, setBriefs] = useState<ArtifactSummaryDTO[]>([]);
-	const [activeBrief, setActiveBrief] = useState<ArtifactDTO | null>(null);
-	const [activeBriefId, setActiveBriefId] = useState<string | null>(null);
-	const [activeBriefLoading, setActiveBriefLoading] = useState(false);
-	const [briefFocus, setBriefFocus] = useState("");
-	const [isCreatingBrief, setIsCreatingBrief] = useState(false);
-	const [briefError, setBriefError] = useState<string | null>(null);
-	const briefsLoadedRef = useRef(false);
+	const [artifacts, setArtifacts] = useState(initialArtifacts);
+	const [activeArtifact, setActiveArtifact] = useState<ArtifactDTO | null>(
+		null,
+	);
+	const [activeArtifactId, setActiveArtifactId] = useState<string | null>(
+		() => initialArtifacts[0]?.id ?? null,
+	);
+	const [activeArtifactLoading, setActiveArtifactLoading] = useState(false);
+	const [studioFocus, setStudioFocus] = useState("");
+	const [generatingType, setGeneratingType] =
+		useState<StudioArtifactType | null>(null);
+	const [studioError, setStudioError] = useState<string | null>(null);
 
 	const [isAddingSource, setIsAddingSource] = useState(false);
 	const [sourceError, setSourceError] = useState<string | null>(null);
@@ -195,6 +211,13 @@ export function NotebookWorkspace({
 	useEffect(() => {
 		setMessages(initialMessages);
 	}, [initialMessages]);
+
+	useEffect(() => {
+		setArtifacts(initialArtifacts);
+		setActiveArtifactId(
+			(current) => current ?? initialArtifacts[0]?.id ?? null,
+		);
+	}, [initialArtifacts]);
 
 	function openAddSources() {
 		setSourceError(null);
@@ -455,92 +478,96 @@ export function NotebookWorkspace({
 		});
 	}
 
-	// Briefs are only fetched once the Studio tab is actually opened.
 	useEffect(() => {
-		if (toolsTab !== "studio" || briefsLoadedRef.current) return;
-		briefsLoadedRef.current = true;
-
-		void listArtifactsFn({ data: { notebookId: notebook.id } })
-			.then((rows) => {
-				const briefRows = rows.filter((row) => row.type === "research_brief");
-				setBriefs(briefRows);
-				setActiveBriefId((current) => current ?? briefRows[0]?.id ?? null);
-			})
-			.catch(() => undefined);
-	}, [toolsTab, notebook.id, listArtifactsFn]);
-
-	useEffect(() => {
-		if (!activeBriefId) {
-			setActiveBrief(null);
+		if (!activeArtifactId) {
+			setActiveArtifact(null);
 			return;
 		}
 
 		let cancelled = false;
-		setActiveBriefLoading(true);
-		void getArtifactFn({ data: { id: activeBriefId } })
+		setActiveArtifactLoading(true);
+		void getArtifactFn({ data: { id: activeArtifactId } })
 			.then((artifact) => {
-				if (!cancelled) setActiveBrief(artifact);
+				if (!cancelled) setActiveArtifact(artifact);
 			})
 			.catch(() => {
-				if (!cancelled) setActiveBrief(null);
+				if (!cancelled) setActiveArtifact(null);
 			})
 			.finally(() => {
-				if (!cancelled) setActiveBriefLoading(false);
+				if (!cancelled) setActiveArtifactLoading(false);
 			});
 
 		return () => {
 			cancelled = true;
 		};
-	}, [activeBriefId, getArtifactFn]);
+	}, [activeArtifactId, getArtifactFn]);
 
-	// Generation runs in a background job, so poll until it settles.
+	// Generation runs in a background job, so poll every pending row until it
+	// settles - not just the selected one, so a switch away does not stall it.
+	const pendingArtifactIds = artifacts
+		.filter((row) => row.status === "pending")
+		.map((row) => row.id)
+		.join(",");
+
 	useEffect(() => {
-		if (!activeBriefId || activeBrief?.status !== "pending") return;
+		if (!pendingArtifactIds) return;
+		const ids = pendingArtifactIds.split(",");
 
 		const timer = window.setInterval(() => {
-			void getArtifactFn({ data: { id: activeBriefId } })
-				.then((artifact) => {
-					setActiveBrief(artifact);
-					if (artifact.status === "pending") return;
-					setBriefs((prev) =>
-						prev.map((row) =>
-							row.id === artifact.id ? toBriefSummary(artifact) : row,
-						),
-					);
-				})
-				.catch(() => undefined);
+			for (const id of ids) {
+				void getArtifactFn({ data: { id } })
+					.then((artifact) => {
+						setActiveArtifact((current) =>
+							current?.id === artifact.id ? artifact : current,
+						);
+						if (artifact.status === "pending") return;
+						setArtifacts((prev) =>
+							prev.map((row) =>
+								row.id === artifact.id ? toArtifactSummary(artifact) : row,
+							),
+						);
+						void router.invalidate();
+					})
+					.catch(() => undefined);
+			}
 		}, 2500);
 
 		return () => window.clearInterval(timer);
-	}, [activeBriefId, activeBrief?.status, getArtifactFn]);
+	}, [pendingArtifactIds, getArtifactFn, router]);
 
-	async function handleGenerateBrief() {
-		setBriefError(null);
-		setIsCreatingBrief(true);
+	async function handleGenerateArtifact(type: StudioArtifactType) {
+		setStudioError(null);
+		setGeneratingType(type);
 		try {
-			const created = await generateResearchBriefFn({
-				data: {
-					notebookId: notebook.id,
-					focus: briefFocus.trim() || undefined,
-				},
-			});
-			setBriefs((prev) => [
-				toBriefSummary(created),
+			const data = {
+				notebookId: notebook.id,
+				focus: studioFocus.trim() || undefined,
+			};
+			const created =
+				type === "research_brief"
+					? await generateResearchBriefFn({ data })
+					: await generateStudyGuideFn({ data });
+
+			setArtifacts((prev) => [
+				toArtifactSummary(created),
 				...prev.filter((row) => row.id !== created.id),
 			]);
-			setActiveBrief(created);
-			setActiveBriefId(created.id);
+			setActiveArtifact(created);
+			setActiveArtifactId(created.id);
 		} catch (err) {
-			setBriefError(
-				err instanceof Error ? err.message : "Failed to create research brief",
+			setStudioError(
+				err instanceof Error ? err.message : "Failed to start generation",
 			);
 		} finally {
-			setIsCreatingBrief(false);
+			setGeneratingType(null);
 		}
 	}
 
-	async function openBriefCitation(citation: MessageCitation, ownerId: string) {
-		const nav = (activeBrief?.citations ?? [citation]).map((item) => ({
+	async function openArtifactCitation(
+		citation: MessageCitation,
+		ownerId: string,
+	) {
+		const nav = (activeArtifact?.citations ?? [citation]).map((item) => ({
 			...item,
 			key: citationKey(ownerId, item),
 		}));
@@ -871,25 +898,26 @@ export function NotebookWorkspace({
 		roadmapError,
 		onGenerateRoadmap: () => void handleGenerateRoadmap(),
 		onOpenClip: (c: MessageCitation) => void openRoadmapClip(c),
-		studio: {
-			readyCount,
-			focus: briefFocus,
-			onFocusChange: setBriefFocus,
-			briefs,
-			activeBrief,
-			activeBriefId,
-			activeBriefLoading,
-			isCreating: isCreatingBrief,
-			error: briefError,
-			onGenerate: () => void handleGenerateBrief(),
-			onSelectBrief: (id: string) => {
-				setBriefError(null);
-				setActiveBriefId(id);
-			},
-			activeCitationKey,
-			onCitationClick: (c: MessageCitation, ownerId: string) =>
-				void openBriefCitation(c, ownerId),
+	};
+
+	const studioProps = {
+		readyCount,
+		focus: studioFocus,
+		onFocusChange: setStudioFocus,
+		artifacts,
+		activeArtifact,
+		activeArtifactId,
+		activeArtifactLoading,
+		generatingType,
+		error: studioError,
+		onGenerate: (type: StudioArtifactType) => void handleGenerateArtifact(type),
+		onSelectArtifact: (id: string) => {
+			setStudioError(null);
+			setActiveArtifactId(id);
 		},
+		activeCitationKey,
+		onCitationClick: (c: MessageCitation, ownerId: string) =>
+			void openArtifactCitation(c, ownerId),
 	};
 
 	const sourcesSidebarProps = {
@@ -1063,27 +1091,56 @@ export function NotebookWorkspace({
 							<SourcesSidebar {...sourcesSidebarProps} />
 						</ResizablePanel>
 
-						<ChatPanel
-							messages={messages}
-							isAsking={isAsking}
-							askStatus={askStatus}
-							question={question}
-							onQuestionChange={setQuestion}
-							onAsk={() => void runAsk(question)}
-							onRegenerate={handleRegenerate}
-							chatError={chatError}
-							readyCount={readyCount}
-							sourceCount={sources.length}
-							onAddSources={openAddSources}
-							activeCitationKey={activeCitationKey}
-							onCitationClick={(citation, messageId) =>
-								void openCitation(citation, messageId)
-							}
-							onFollowUpAsk={(followUp) => {
-								setQuestion(followUp);
-								void runAsk(followUp);
-							}}
-						/>
+						<Tabs
+							value={centerMode}
+							onValueChange={(value) => setCenterMode(value as CenterMode)}
+							className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 bg-[var(--workspace-bg)]"
+						>
+							<div className="border-b border-border bg-card px-3 pt-2">
+								<TabsList className="h-9 justify-start bg-transparent p-0">
+									<TabsTrigger value="chat" className="text-xs">
+										Chat
+									</TabsTrigger>
+									<TabsTrigger value="studio" className="text-xs">
+										Studio
+									</TabsTrigger>
+								</TabsList>
+							</div>
+
+							{/* Both panes stay mounted so chat scroll survives a switch. */}
+							<TabsContent
+								value="chat"
+								className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
+							>
+								<ChatPanel
+									messages={messages}
+									isAsking={isAsking}
+									askStatus={askStatus}
+									question={question}
+									onQuestionChange={setQuestion}
+									onAsk={() => void runAsk(question)}
+									onRegenerate={handleRegenerate}
+									chatError={chatError}
+									readyCount={readyCount}
+									sourceCount={sources.length}
+									onAddSources={openAddSources}
+									activeCitationKey={activeCitationKey}
+									onCitationClick={(citation, messageId) =>
+										void openCitation(citation, messageId)
+									}
+									onFollowUpAsk={(followUp) => {
+										setQuestion(followUp);
+										void runAsk(followUp);
+									}}
+								/>
+							</TabsContent>
+							<TabsContent
+								value="studio"
+								className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
+							>
+								<StudioPanel {...studioProps} />
+							</TabsContent>
+						</Tabs>
 					</>
 				)}
 

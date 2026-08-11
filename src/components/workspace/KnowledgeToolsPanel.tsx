@@ -2,7 +2,6 @@ import type {
 	CitationNavItem,
 	ViewerSource,
 } from "#/components/notebook/source-viewer/types.ts";
-import type { ResearchStudioPanelProps } from "#/components/workspace/studio/ResearchStudioPanel.tsx";
 import {
 	type ToolsTab,
 	ViewerTabs,
@@ -46,7 +45,6 @@ export function KnowledgeToolsPanel({
 	roadmapError: string | null;
 	onGenerateRoadmap: () => void;
 	onOpenClip: (citation: MessageCitation) => void;
-	studio: ResearchStudioPanelProps;
 	className?: string;
 }) {
 	return (
