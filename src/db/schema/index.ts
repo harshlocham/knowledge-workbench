@@ -5,6 +5,10 @@ export {
 	artifactTypeEnum,
 	type ArtifactContent,
 	type ArtifactSection,
+	type StudyGuideCitedItem,
+	type StudyGuideConcept,
+	type StudyGuideData,
+	type StudyGuideReviewQuestion,
 } from "./artifacts.ts";
 export {
 	chunks,
