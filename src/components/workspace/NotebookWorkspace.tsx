@@ -31,6 +31,7 @@ import {
 import { AddSourceSheet } from "#/components/workspace/AddSourceSheet.tsx";
 import { ChatPanel } from "#/components/workspace/ChatPanel.tsx";
 import { EditableNotebookTitle } from "#/components/workspace/EditableNotebookTitle.tsx";
+import { FirstNotebookGuide } from "#/components/workspace/FirstNotebookGuide.tsx";
 import { KnowledgeToolsPanel } from "#/components/workspace/KnowledgeToolsPanel.tsx";
 import { citationKey } from "#/components/workspace/MarkdownWithCitations.tsx";
 import { SourcesSidebar } from "#/components/workspace/SourcesSidebar.tsx";
@@ -68,6 +69,7 @@ import { generateLearningRoadmapArtifact } from "#/features/studio/learning-road
 import { generateResearchBriefArtifact } from "#/features/studio/research-brief.functions.ts";
 import { generateStudyGuideArtifact } from "#/features/studio/study-guide.functions.ts";
 import { useWorkspaceLayout } from "#/hooks/use-workspace-layout.ts";
+import { track } from "#/lib/analytics.ts";
 import { askNotebookStream } from "#/lib/chat/ask-stream.ts";
 import {
 	isLimitOrProError,
@@ -398,6 +400,15 @@ export function NotebookWorkspace({
 		[sources],
 	);
 
+	const firstReadyTracked = useRef(false);
+	useEffect(() => {
+		if (firstReadyTracked.current) return;
+		if (readyCount >= 1) {
+			firstReadyTracked.current = true;
+			track("first_source_ready");
+		}
+	}, [readyCount]);
+
 	const selectedSource = useMemo(
 		() => sources.find((s) => s.id === viewer?.id) ?? null,
 		[sources, viewer?.id],
@@ -540,6 +551,7 @@ export function NotebookWorkspace({
 			]);
 			setActiveArtifact(created);
 			setActiveArtifactId(created.id);
+			track("artifact_generated", { type });
 			void billing.refresh();
 		} catch (err) {
 			const parsed = parseAppError(err);
@@ -651,12 +663,17 @@ export function NotebookWorkspace({
 					const ids = new Set(createdSources.map((s) => s.id));
 					return [...createdSources, ...prev.filter((s) => !ids.has(s.id))];
 				});
+				track("source_added", {
+					mode: "youtube_playlist",
+					count: createdSources.length,
+				});
 				return;
 			}
 			setSources((prev) => [
 				created,
 				...prev.filter((s) => s.id !== created.id),
 			]);
+			track("source_added", { mode: payload.mode });
 		} catch (err) {
 			const parsed = parseAppError(err);
 			const message =
@@ -712,6 +729,11 @@ export function NotebookWorkspace({
 	async function runAsk(nextQuestion: string) {
 		const trimmed = nextQuestion.trim();
 		if (!trimmed || isAsking) return;
+
+		const isFirstQuestion = messages.every((m) => m.role !== "user");
+		if (isFirstQuestion) {
+			track("first_question");
+		}
 
 		setChatError(null);
 		setIsAsking(true);
@@ -1074,7 +1096,13 @@ export function NotebookWorkspace({
 
 						<Tabs
 							value={centerMode}
-							onValueChange={(value) => setCenterMode(value as CenterMode)}
+							onValueChange={(value) => {
+								const next = value as CenterMode;
+								setCenterMode(next);
+								if (next === "studio") {
+									track("studio_opened");
+								}
+							}}
 							className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 bg-[var(--workspace-bg)]"
 						>
 							<div className="border-b border-border bg-card px-3 pt-2">
@@ -1087,6 +1115,20 @@ export function NotebookWorkspace({
 									</TabsTrigger>
 								</TabsList>
 							</div>
+
+							{(sources.length < 2 || readyCount < 1) && (
+								<div className="border-b border-border bg-[var(--workspace-bg)] px-3 py-3 sm:px-4">
+									<FirstNotebookGuide
+										sourceCount={sources.length}
+										readyCount={readyCount}
+										onAddSources={openAddSources}
+										onOpenStudio={() => {
+											setCenterMode("studio");
+											track("studio_opened");
+										}}
+									/>
+								</div>
+							)}
 
 							{/* Both panes stay mounted so chat scroll survives a switch. */}
 							<TabsContent

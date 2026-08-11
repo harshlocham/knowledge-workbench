@@ -21,6 +21,7 @@ import {
 	ARTIFACT_TYPE_LABELS,
 	type ArtifactDTO,
 } from "#/features/studio/artifacts.types.ts";
+import { track } from "#/lib/analytics.ts";
 import {
 	artifactMarkdownFilename,
 	artifactToMarkdown,
@@ -78,6 +79,7 @@ export function ArtifactDocument({
 			billing?.openUpgrade("export");
 			return;
 		}
+		track("export_clicked", { action: "copy" });
 		try {
 			await navigator.clipboard.writeText(markdown);
 			setCopied(true);
@@ -94,6 +96,7 @@ export function ArtifactDocument({
 			billing?.openUpgrade("export");
 			return;
 		}
+		track("export_clicked", { action: "download" });
 		downloadMarkdown(
 			artifactMarkdownFilename(artifact.title, artifact.type),
 			markdown,
@@ -101,6 +104,7 @@ export function ArtifactDocument({
 	}
 
 	function handleShareClick() {
+		track("share_clicked");
 		if (!isPro) {
 			billing?.openUpgrade("share");
 			return;

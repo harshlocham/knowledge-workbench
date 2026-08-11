@@ -15,6 +15,7 @@ import {
 	deleteNotebook,
 	type NotebookDTO,
 } from "#/features/notebooks/notebooks.functions.ts";
+import { track } from "#/lib/analytics.ts";
 import { isLimitOrProError, parseAppError } from "#/lib/errors.ts";
 
 export function NotebooksDashboard({
@@ -52,6 +53,7 @@ export function NotebooksDashboard({
 			const notebook = await createNotebookFn({
 				data: { title: "Untitled notebook" },
 			});
+			track("notebook_created");
 			await router.invalidate();
 			await router.navigate({
 				to: "/notebooks/$notebookId",
@@ -138,8 +140,8 @@ export function NotebooksDashboard({
 				) : notebooks.length === 0 ? (
 					<EmptyState
 						icon={BookOpen}
-						title="No notebooks yet"
-						description="Create a notebook to start collecting sources — you can rename it anytime."
+						title="Start your first research notebook"
+						description="Add technical material and turn it into a reusable learning workspace — docs, PDFs, articles, and YouTube courses."
 						action={createButton}
 						className="rounded-xl border border-dashed border-border bg-card"
 					/>
