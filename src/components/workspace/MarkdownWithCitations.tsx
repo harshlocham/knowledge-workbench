@@ -1,4 +1,4 @@
-import { Children, type ReactNode } from "react";
+import { Children, type ReactNode, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -14,9 +14,31 @@ export function citationKey(ownerId: string, citation: MessageCitation) {
 	return `${ownerId}:${citation.chunkId}:${citation.citationNumber ?? ""}`;
 }
 
+type CitationResolver = (citationNumber: number) => MessageCitation | undefined;
+
+/**
+ * Resolves `[n]` to the citation that claims number `n`. Falling back to list
+ * position is only safe for older records that carry no numbers at all —
+ * otherwise a stray number would silently render someone else's source.
+ */
+function makeCitationResolver(citations: MessageCitation[]): CitationResolver {
+	const byNumber = new Map<number, MessageCitation>();
+	for (const citation of citations) {
+		if (typeof citation.citationNumber === "number") {
+			byNumber.set(citation.citationNumber, citation);
+		}
+	}
+
+	if (byNumber.size === 0) {
+		return (citationNumber) => citations[citationNumber - 1];
+	}
+
+	return (citationNumber) => byNumber.get(citationNumber);
+}
+
 function injectCitationBadges(
 	node: ReactNode,
-	citations: MessageCitation[],
+	resolveCitation: CitationResolver,
 	ownerId: string,
 	activeCitationKey: string | null,
 	onCitationClick: (citation: MessageCitation, ownerId: string) => void,
@@ -38,9 +60,7 @@ function injectCitationBadges(
 			}
 
 			const citationNumber = Number(match[1]);
-			const citation =
-				citations.find((item) => item.citationNumber === citationNumber) ??
-				citations[citationNumber - 1];
+			const citation = resolveCitation(citationNumber);
 			if (!citation) {
 				children.push(<span key={`t-${start}`}>{part}</span>);
 				continue;
@@ -66,7 +86,7 @@ function injectCitationBadges(
 		return Children.map(node, (child) =>
 			injectCitationBadges(
 				child,
-				citations,
+				resolveCitation,
 				ownerId,
 				activeCitationKey,
 				onCitationClick,
@@ -93,6 +113,11 @@ export function MarkdownWithCitations({
 	onCitationClick: (citation: MessageCitation, ownerId: string) => void;
 	className?: string;
 }) {
+	const resolveCitation = useMemo(
+		() => makeCitationResolver(citations),
+		[citations],
+	);
+
 	const wrap =
 		(Tag: "p" | "li" | "td" | "th" | "strong" | "em") =>
 		({ children }: { children?: ReactNode }) => {
@@ -101,7 +126,7 @@ export function MarkdownWithCitations({
 				<Comp>
 					{injectCitationBadges(
 						children,
-						citations,
+						resolveCitation,
 						ownerId,
 						activeCitationKey,
 						onCitationClick,

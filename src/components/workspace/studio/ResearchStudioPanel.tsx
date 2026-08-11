@@ -154,6 +154,11 @@ export function ResearchStudioPanel({
 						{activeBrief.errorMessage ??
 							"Something went wrong while generating this brief."}
 					</p>
+					<p className="mt-2 text-xs text-destructive/80">
+						{readyCount < 2
+							? "A brief needs enough indexed evidence to stay honest. Add another source, or a longer one, then try again."
+							: "Try a narrower focus, or add sources that cover this topic in more depth."}
+					</p>
 					<Button
 						type="button"
 						variant="outline"
