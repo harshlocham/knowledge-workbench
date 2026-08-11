@@ -7,6 +7,7 @@ import { listReadyNotebookSources } from "./artifact-sources.server.ts";
 import { insertArtifact } from "./artifacts.store.server.ts";
 import type { ArtifactDTO } from "./artifacts.types.ts";
 import { runCompareSourcesGeneration } from "./compare-sources.server.ts";
+import { consumeStudioGenerationSlot } from "./studio-generation-gate.server.ts";
 
 /**
  * Creates a `pending` Compare Sources artifact and generates it in the
@@ -27,6 +28,8 @@ export const generateCompareSourcesArtifact = createServerFn({ method: "POST" })
 		if (readySources.length < 2) {
 			throw new Error("Compare Sources requires at least two ready sources.");
 		}
+
+		await consumeStudioGenerationSlot(userId);
 
 		const artifact = await insertArtifact({
 			notebookId: data.notebookId,

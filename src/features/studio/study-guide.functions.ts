@@ -6,6 +6,7 @@ import { enqueueBackgroundJob } from "#/lib/ingest/jobs.server.ts";
 import { listReadyNotebookSources } from "./artifact-sources.server.ts";
 import { insertArtifact } from "./artifacts.store.server.ts";
 import type { ArtifactDTO } from "./artifacts.types.ts";
+import { consumeStudioGenerationSlot } from "./studio-generation-gate.server.ts";
 import { runStudyGuideGeneration } from "./study-guide.server.ts";
 
 /**
@@ -29,6 +30,8 @@ export const generateStudyGuideArtifact = createServerFn({ method: "POST" })
 				"Add at least one indexed source before creating a study guide.",
 			);
 		}
+
+		await consumeStudioGenerationSlot(userId);
 
 		const artifact = await insertArtifact({
 			notebookId: data.notebookId,

@@ -7,6 +7,7 @@ import { listReadyNotebookSources } from "./artifact-sources.server.ts";
 import { insertArtifact } from "./artifacts.store.server.ts";
 import type { ArtifactDTO } from "./artifacts.types.ts";
 import { runResearchBriefGeneration } from "./research-brief.server.ts";
+import { consumeStudioGenerationSlot } from "./studio-generation-gate.server.ts";
 
 /**
  * Creates a `pending` Research Brief and generates it in the background, so a
@@ -29,6 +30,8 @@ export const generateResearchBriefArtifact = createServerFn({ method: "POST" })
 				"Add at least one indexed source before creating a research brief.",
 			);
 		}
+
+		await consumeStudioGenerationSlot(userId);
 
 		const artifact = await insertArtifact({
 			notebookId: data.notebookId,

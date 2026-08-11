@@ -2,7 +2,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { Menu, PanelRight, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-
+import { useBilling } from "#/components/billing/BillingProvider.tsx";
 import { Breadcrumbs } from "#/components/layout/Breadcrumbs.tsx";
 import { ResizablePanel } from "#/components/layout/ResizablePanel.tsx";
 import { TopNavigation } from "#/components/layout/TopNavigation.tsx";
@@ -69,6 +69,11 @@ import { generateResearchBriefArtifact } from "#/features/studio/research-brief.
 import { generateStudyGuideArtifact } from "#/features/studio/study-guide.functions.ts";
 import { useWorkspaceLayout } from "#/hooks/use-workspace-layout.ts";
 import { askNotebookStream } from "#/lib/chat/ask-stream.ts";
+import {
+	isLimitOrProError,
+	parseAppError,
+	upgradeSourceForError,
+} from "#/lib/errors.ts";
 import { fileToBase64 } from "#/lib/file-to-base64.ts";
 import {
 	formatBytes,
@@ -113,6 +118,7 @@ export function NotebookWorkspace({
 }) {
 	const router = useRouter();
 	const layout = useWorkspaceLayout();
+	const billing = useBilling();
 
 	const createTextSourceFn = useServerFn(createTextSource);
 	const createPdfSourceFn = useServerFn(createPdfSource);
@@ -534,10 +540,13 @@ export function NotebookWorkspace({
 			]);
 			setActiveArtifact(created);
 			setActiveArtifactId(created.id);
+			void billing.refresh();
 		} catch (err) {
-			setStudioError(
-				err instanceof Error ? err.message : "Failed to start generation",
-			);
+			const parsed = parseAppError(err);
+			setStudioError(parsed.message || "Failed to start generation");
+			if (isLimitOrProError(parsed.code)) {
+				billing.openUpgrade(upgradeSourceForError(parsed.code));
+			}
 		} finally {
 			setGeneratingType(null);
 		}
@@ -649,7 +658,15 @@ export function NotebookWorkspace({
 				...prev.filter((s) => s.id !== created.id),
 			]);
 		} catch (err) {
-			setSourceError(friendlyIngestError(err, "Failed to add source"));
+			const parsed = parseAppError(err);
+			const message =
+				parsed.code === "SOURCE_LIMIT"
+					? parsed.message
+					: friendlyIngestError(err, "Failed to add source");
+			setSourceError(message);
+			if (isLimitOrProError(parsed.code)) {
+				billing.openUpgrade("general_upgrade");
+			}
 			throw err;
 		} finally {
 			setIsAddingSource(false);

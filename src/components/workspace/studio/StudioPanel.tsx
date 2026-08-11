@@ -1,5 +1,6 @@
 import { AlertTriangle, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
 
+import { useBillingOptional } from "#/components/billing/BillingProvider.tsx";
 import { EmptyState } from "#/components/layout/EmptyState.tsx";
 import { Button } from "#/components/ui/button.tsx";
 import { Input } from "#/components/ui/input.tsx";
@@ -72,6 +73,8 @@ export function StudioPanel({
 	onCitationClick,
 	onArtifactPatch,
 }: StudioPanelProps) {
+	const billing = useBillingOptional();
+	const studioUsage = billing?.summary?.studio;
 	const noEvidence = readyCount === 0;
 	const pendingTypes = new Set(
 		artifacts.filter((row) => row.status === "pending").map((row) => row.type),
@@ -101,6 +104,12 @@ export function StudioPanel({
 					<p className="mt-1 text-sm text-muted-foreground">
 						Turn your sources into useful knowledge.
 					</p>
+					{studioUsage ? (
+						<p className="mt-2 text-xs text-muted-foreground">
+							Studio generations · {studioUsage.used} / {studioUsage.limit} this
+							month
+						</p>
+					) : null}
 				</header>
 
 				<div className="space-y-2">

@@ -7,6 +7,7 @@ import { listReadyNotebookSources } from "./artifact-sources.server.ts";
 import { insertArtifact } from "./artifacts.store.server.ts";
 import type { ArtifactDTO } from "./artifacts.types.ts";
 import { runLearningRoadmapGeneration } from "./learning-roadmap.server.ts";
+import { consumeStudioGenerationSlot } from "./studio-generation-gate.server.ts";
 
 /**
  * Creates a `pending` Learning Roadmap and generates it in the background, so a
@@ -31,6 +32,8 @@ export const generateLearningRoadmapArtifact = createServerFn({
 				"Add at least one indexed source before creating a learning roadmap.",
 			);
 		}
+
+		await consumeStudioGenerationSlot(userId);
 
 		const artifact = await insertArtifact({
 			notebookId: data.notebookId,

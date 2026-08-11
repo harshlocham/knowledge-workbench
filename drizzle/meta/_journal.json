@@ -29,6 +29,13 @@
       "when": 1786400000000,
       "tag": "0003_artifact_share",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786410000000,
+      "tag": "0004_plan_limits",
+      "breakpoints": true
     }
   ]
 }
