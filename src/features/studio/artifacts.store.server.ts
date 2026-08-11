@@ -106,6 +106,23 @@ export async function insertArtifact(input: {
 	return toArtifactDTO(row);
 }
 
+/**
+ * Unauthorized row read for background generation, which runs outside the
+ * request and therefore has no Clerk session. Request paths must keep using
+ * `requireOwnedArtifact`.
+ */
+export async function getArtifactRowById(
+	artifactId: string,
+): Promise<ArtifactRow | null> {
+	const [row] = await db
+		.select()
+		.from(artifacts)
+		.where(eq(artifacts.id, artifactId))
+		.limit(1);
+
+	return row ?? null;
+}
+
 export async function listArtifactsByNotebook(
 	notebookId: string,
 ): Promise<ArtifactSummaryDTO[]> {
