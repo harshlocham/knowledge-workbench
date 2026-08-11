@@ -26,6 +26,7 @@ import { AddSourceSheet } from "#/components/workspace/AddSourceSheet.tsx";
 import { ChatPanel } from "#/components/workspace/ChatPanel.tsx";
 import { EditableNotebookTitle } from "#/components/workspace/EditableNotebookTitle.tsx";
 import { KnowledgeToolsPanel } from "#/components/workspace/KnowledgeToolsPanel.tsx";
+import { citationKey } from "#/components/workspace/MarkdownWithCitations.tsx";
 import { SourcesSidebar } from "#/components/workspace/SourcesSidebar.tsx";
 import type { ToolsTab } from "#/components/workspace/ViewerTabs.tsx";
 import type { MessageCitation } from "#/db/schema/messages.ts";
@@ -54,6 +55,15 @@ import {
 	reindexSource,
 	type SourceDTO,
 } from "#/features/sources/sources.functions.ts";
+import {
+	getArtifact,
+	listArtifacts,
+} from "#/features/studio/artifacts.functions.ts";
+import type {
+	ArtifactDTO,
+	ArtifactSummaryDTO,
+} from "#/features/studio/artifacts.types.ts";
+import { generateResearchBriefArtifact } from "#/features/studio/research-brief.functions.ts";
 import { useWorkspaceLayout } from "#/hooks/use-workspace-layout.ts";
 import { fileToBase64 } from "#/lib/file-to-base64.ts";
 import {
@@ -73,8 +83,14 @@ function isPendingStatus(status: SourceDTO["status"]) {
 	return status === "uploading" || status === "indexing";
 }
 
-function citationKey(messageId: string, citation: MessageCitation) {
-	return `${messageId}:${citation.chunkId}:${citation.citationNumber ?? ""}`;
+/** Optimistic list row for a brief we just created, before the list refreshes. */
+function toBriefSummary(artifact: ArtifactDTO): ArtifactSummaryDTO {
+	const { content, citations, ...rest } = artifact;
+	return {
+		...rest,
+		citationCount: citations.length,
+		sectionCount: content?.sections.length ?? 0,
+	};
 }
 
 export function NotebookWorkspace({
@@ -101,6 +117,9 @@ export function NotebookWorkspace({
 	const getSourceViewerFn = useServerFn(getSourceViewer);
 	const buildLearningRoadmapFn = useServerFn(buildLearningRoadmap);
 	const updateNotebookFn = useServerFn(updateNotebook);
+	const listArtifactsFn = useServerFn(listArtifacts);
+	const getArtifactFn = useServerFn(getArtifact);
+	const generateResearchBriefFn = useServerFn(generateResearchBriefArtifact);
 
 	const [notebookState, setNotebookState] = useState(notebook);
 	const [sources, setSources] = useState(initialSources);
@@ -128,6 +147,15 @@ export function NotebookWorkspace({
 	const [roadmapFocus, setRoadmapFocus] = useState("");
 	const [isGeneratingRoadmap, setIsGeneratingRoadmap] = useState(false);
 	const [roadmapError, setRoadmapError] = useState<string | null>(null);
+
+	const [briefs, setBriefs] = useState<ArtifactSummaryDTO[]>([]);
+	const [activeBrief, setActiveBrief] = useState<ArtifactDTO | null>(null);
+	const [activeBriefId, setActiveBriefId] = useState<string | null>(null);
+	const [activeBriefLoading, setActiveBriefLoading] = useState(false);
+	const [briefFocus, setBriefFocus] = useState("");
+	const [isCreatingBrief, setIsCreatingBrief] = useState(false);
+	const [briefError, setBriefError] = useState<string | null>(null);
+	const briefsLoadedRef = useRef(false);
 
 	const [isAddingSource, setIsAddingSource] = useState(false);
 	const [sourceError, setSourceError] = useState<string | null>(null);
@@ -421,6 +449,103 @@ export function NotebookWorkspace({
 		setCitationNav([{ ...citation, key }]);
 		setActiveCitationKey(key);
 		setToolsTab("source");
+		await loadViewer({
+			sourceId: citation.sourceId,
+			chunkId: citation.chunkId,
+		});
+	}
+
+	// Briefs are only fetched once the Studio tab is actually opened.
+	useEffect(() => {
+		if (toolsTab !== "studio" || briefsLoadedRef.current) return;
+		briefsLoadedRef.current = true;
+
+		void listArtifactsFn({ data: { notebookId: notebook.id } })
+			.then((rows) => {
+				const briefRows = rows.filter((row) => row.type === "research_brief");
+				setBriefs(briefRows);
+				setActiveBriefId((current) => current ?? briefRows[0]?.id ?? null);
+			})
+			.catch(() => undefined);
+	}, [toolsTab, notebook.id, listArtifactsFn]);
+
+	useEffect(() => {
+		if (!activeBriefId) {
+			setActiveBrief(null);
+			return;
+		}
+
+		let cancelled = false;
+		setActiveBriefLoading(true);
+		void getArtifactFn({ data: { id: activeBriefId } })
+			.then((artifact) => {
+				if (!cancelled) setActiveBrief(artifact);
+			})
+			.catch(() => {
+				if (!cancelled) setActiveBrief(null);
+			})
+			.finally(() => {
+				if (!cancelled) setActiveBriefLoading(false);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [activeBriefId, getArtifactFn]);
+
+	// Generation runs in a background job, so poll until it settles.
+	useEffect(() => {
+		if (!activeBriefId || activeBrief?.status !== "pending") return;
+
+		const timer = window.setInterval(() => {
+			void getArtifactFn({ data: { id: activeBriefId } })
+				.then((artifact) => {
+					setActiveBrief(artifact);
+					if (artifact.status === "pending") return;
+					setBriefs((prev) =>
+						prev.map((row) =>
+							row.id === artifact.id ? toBriefSummary(artifact) : row,
+						),
+					);
+				})
+				.catch(() => undefined);
+		}, 2500);
+
+		return () => window.clearInterval(timer);
+	}, [activeBriefId, activeBrief?.status, getArtifactFn]);
+
+	async function handleGenerateBrief() {
+		setBriefError(null);
+		setIsCreatingBrief(true);
+		try {
+			const created = await generateResearchBriefFn({
+				data: {
+					notebookId: notebook.id,
+					focus: briefFocus.trim() || undefined,
+				},
+			});
+			setBriefs((prev) => [
+				toBriefSummary(created),
+				...prev.filter((row) => row.id !== created.id),
+			]);
+			setActiveBrief(created);
+			setActiveBriefId(created.id);
+		} catch (err) {
+			setBriefError(
+				err instanceof Error ? err.message : "Failed to create research brief",
+			);
+		} finally {
+			setIsCreatingBrief(false);
+		}
+	}
+
+	async function openBriefCitation(citation: MessageCitation, ownerId: string) {
+		const nav = (activeBrief?.citations ?? [citation]).map((item) => ({
+			...item,
+			key: citationKey(ownerId, item),
+		}));
+		setCitationNav(nav);
+		setActiveCitationKey(citationKey(ownerId, citation));
 		await loadViewer({
 			sourceId: citation.sourceId,
 			chunkId: citation.chunkId,
@@ -746,6 +871,25 @@ export function NotebookWorkspace({
 		roadmapError,
 		onGenerateRoadmap: () => void handleGenerateRoadmap(),
 		onOpenClip: (c: MessageCitation) => void openRoadmapClip(c),
+		studio: {
+			readyCount,
+			focus: briefFocus,
+			onFocusChange: setBriefFocus,
+			briefs,
+			activeBrief,
+			activeBriefId,
+			activeBriefLoading,
+			isCreating: isCreatingBrief,
+			error: briefError,
+			onGenerate: () => void handleGenerateBrief(),
+			onSelectBrief: (id: string) => {
+				setBriefError(null);
+				setActiveBriefId(id);
+			},
+			activeCitationKey,
+			onCitationClick: (c: MessageCitation, ownerId: string) =>
+				void openBriefCitation(c, ownerId),
+		},
 	};
 
 	const sourcesSidebarProps = {
