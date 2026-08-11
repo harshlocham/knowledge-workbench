@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Widget Framework Documentation</title>
+		<link rel="canonical" href="https://docs.example.com/guide/query-caching" />
+		<style>
+			.sidebar { display: block; }
+		</style>
+		<script>
+			window.__DOCS_VERSION__ = "4.2";
+		</script>
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+
+		<header class="site-header">
+			<a href="/" class="brand">Widget Framework</a>
+			<nav aria-label="Primary">
+				<ul>
+					<li><a href="/guide">Guide</a></li>
+					<li><a href="/api">API Reference</a></li>
+					<li><a href="/blog">Blog</a></li>
+					<li><a href="/community">Community</a></li>
+				</ul>
+			</nav>
+			<button type="button" aria-expanded="false" aria-controls="mobile-menu">
+				Menu
+			</button>
+		</header>
+
+		<div class="layout">
+			<aside class="sidebar" id="docs-nav">
+				<nav aria-label="Documentation">
+					<ul>
+						<li><a href="/guide/installation">Installation</a></li>
+						<li><a href="/guide/routing">Routing</a></li>
+						<li><a href="/guide/query-caching">Query Caching</a></li>
+						<li><a href="/guide/mutations">Mutations</a></li>
+						<li><a href="/guide/testing">Testing</a></li>
+						<li><a href="/guide/deployment">Deployment</a></li>
+					</ul>
+				</nav>
+			</aside>
+
+			<main id="main">
+				<div class="preferences" role="search">
+					<form>
+						<label for="doc-search">Search docs</label>
+						<input id="doc-search" type="search" placeholder="Search" />
+					</form>
+				</div>
+
+				<div class="theme-controls">
+					<label for="site-colours">Site Colours</label>
+					<select id="site-colours">
+						<option value="auto">Auto</option>
+						<option value="light">Light</option>
+						<option value="dark">Dark</option>
+					</select>
+
+					<label for="code-font">Code Font</label>
+					<select id="code-font">
+						<option value="mono">System Mono</option>
+						<option value="serif">Serif</option>
+					</select>
+
+					<button type="button" aria-pressed="false">Toggle contrast</button>
+				</div>
+
+				<article>
+					<h1 id="query-caching">Query Caching</h1>
+
+					<p>
+						The cache stores the result of every resolved query under a key
+						derived from its arguments. A second request with the same key is
+						served from memory instead of hitting the network, which is what
+						makes repeated navigation feel instant. Nothing is written to disk,
+						so the cache is empty again on a full page load and warms up as the
+						first few screens resolve.
+					</p>
+
+					<p>
+						Entries are held until either the entry limit is reached or the
+						owning provider is torn down. Because the limit is counted in
+						entries rather than bytes, a query that resolves to a very large
+						payload occupies exactly as much of the budget as one that resolves
+						to a single number.
+					</p>
+
+					<h2 id="cache-keys">Cache Keys</h2>
+
+					<p>
+						A cache key is a stable serialization of the query arguments. Two
+						queries share a cache entry only when their keys are deeply equal,
+						so argument order does not matter but argument values do. The
+						serializer sorts object properties before hashing, which is what
+						makes the comparison independent of the order the caller happened to
+						write the arguments in.
+					</p>
+
+					<h3 id="key-stability">Key Stability</h3>
+
+					<p>
+						Keys must not contain values that change on every render. Passing a
+						freshly constructed object or a timestamp produces a new key each
+						time and defeats the cache entirely. The symptom is a cache that
+						grows without bound while its hit rate stays at zero, which is worth
+						checking first whenever caching appears to do nothing at all.
+					</p>
+
+					<p>
+						Values that are stable by construction are safe to include. Route
+						parameters, identifiers and enumerated filter values all serialize
+						to the same key across renders and are the usual building blocks of
+						a well behaved key.
+					</p>
+
+					<h3 id="key-collisions">Key Collisions</h3>
+
+					<p>
+						Two unrelated queries that serialize to the same key will read each
+						other's data. Namespacing every key with the resource name avoids
+						this without any additional bookkeeping, and it makes the cache
+						contents readable when they are dumped during debugging.
+					</p>
+
+					<p>
+						Collisions are silent. There is no runtime warning when two callers
+						converge on one key, so the convention has to be enforced by review
+						or by a helper that builds keys from a resource name and an argument
+						object rather than by hand.
+					</p>
+
+					<h2 id="invalidation">Invalidation</h2>
+
+					<p>
+						Invalidation marks entries as stale rather than deleting them. Stale
+						entries are still served while a background refetch runs, so the
+						interface never falls back to a loading state it has already passed
+						through. The refetch replaces the entry when it resolves, and
+						subscribers re-render once at that point rather than twice.
+					</p>
+
+					<p>
+						Deletion is available as a separate operation for the cases where
+						serving stale data would be wrong, such as after a sign out. Prefer
+						invalidation everywhere else, because deletion reintroduces exactly
+						the loading states the cache exists to remove.
+					</p>
+
+					<aside class="callout">
+						<p>
+							Invalidation is asynchronous. Awaiting the invalidation call does
+							not guarantee that dependent queries have finished refetching.
+						</p>
+					</aside>
+				</article>
+			</main>
+		</div>
+
+		<footer class="site-footer">
+			<nav aria-label="Footer">
+				<a href="/privacy">Privacy</a>
+				<a href="/terms">Terms</a>
+				<a href="/status">Status</a>
+			</nav>
+			<p>Copyright 2019 Widget Framework contributors.</p>
+		</footer>
+
+		<div aria-hidden="true" class="tooltip-portal">
+			Press slash to focus the search field
+		</div>
+
+		<dialog id="cookie-banner">
+			<p>We use cookies to measure documentation traffic.</p>
+			<button type="button">Accept all</button>
+		</dialog>
+
+		<template id="row-template">
+			<tr><td>Placeholder row</td></tr>
+		</template>
+	</body>
+</html>

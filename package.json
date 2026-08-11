@@ -19,6 +19,8 @@
     "db:pull": "drizzle-kit pull",
     "db:studio": "drizzle-kit studio",
     "eval:rag": "bun run scripts/eval-rag.ts",
+    "test:url": "bun run scripts/test-url-extraction.ts",
+    "inspect:url": "bun run scripts/inspect-url.ts",
     "verify:youtube-proxy": "bun run scripts/verify-youtube-proxy.ts"
   },
   "dependencies": {

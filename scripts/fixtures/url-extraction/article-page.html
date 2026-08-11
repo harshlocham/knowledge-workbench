@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>What Changed in Review Practice — Engineering Notes</title>
+	</head>
+	<body>
+		<header>
+			<nav>
+				<a href="/">Home</a>
+				<a href="/archive">Archive</a>
+				<a href="/about">About</a>
+			</nav>
+		</header>
+
+		<article>
+			<header>
+				<h1 id="what-changed-in-review-practice">
+					What Changed in Review Practice
+				</h1>
+				<p class="byline">Posted in Engineering Notes</p>
+			</header>
+
+			<p>
+				Code review used to be a gate placed at the end of the work. A change was
+				finished, then someone else decided whether it could ship. That framing
+				produced long queues and reviews that arrived far too late to influence
+				the design of the change they were reviewing.
+			</p>
+
+			<p>
+				The shift was to treat review as a conversation that starts while the work
+				is still malleable. See the
+				<a href="https://example.org/reports/review-latency">latency report</a>
+				for the measurements that prompted the change, and the
+				<a href="https://example.org/reports/queue-depth">queue depth study</a>
+				for the follow up.
+			</p>
+
+			<h2 id="what-we-changed">What We Changed</h2>
+
+			<p>Three adjustments accounted for most of the improvement.</p>
+
+			<ol>
+				<li>Reviews were requested from a draft rather than a finished branch.</li>
+				<li>
+					Any change over four hundred lines was split before review was
+					requested.
+				</li>
+				<li>
+					Reviewers were assigned by area of ownership instead of by round
+					robin.
+				</li>
+			</ol>
+
+			<h2 id="what-we-measured">What We Measured</h2>
+
+			<p>
+				The metrics that moved were narrow, and the ones that did not move are
+				worth stating plainly.
+			</p>
+
+			<ul>
+				<li>Time from request to first substantive comment fell sharply.</li>
+				<li>Total review comments per change stayed roughly flat.</li>
+				<li>Revert rate did not change in either direction.</li>
+			</ul>
+
+			<blockquote>
+				<p>
+					A review that arrives after the author has moved on is documentation,
+					not collaboration.
+				</p>
+			</blockquote>
+
+			<h2 id="what-we-would-do-differently">What We Would Do Differently</h2>
+
+			<p>
+				The size limit did most of the work and the ownership routing did the
+				rest. If we ran the experiment again we would introduce the size limit
+				first and measure it alone for a full quarter before changing anything
+				else.
+			</p>
+		</article>
+
+		<footer>
+			<p>Written by the platform team.</p>
+			<nav>
+				<a href="/feed.xml">Feed</a>
+				<a href="/contact">Contact</a>
+			</nav>
+		</footer>
+	</body>
+</html>

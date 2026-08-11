@@ -2,12 +2,13 @@ import { eq } from "drizzle-orm";
 
 import { db } from "#/db/index.ts";
 import { sources } from "#/db/schema/sources.ts";
+import { friendlyIngestError } from "#/lib/ingest/limits.ts";
 import { chunkArticleText } from "#/lib/rag/chunk-article.ts";
 import {
+	type ArticleHeading,
 	extractUrlArticle,
 	normalizeUrl,
 } from "#/lib/rag/extract-url.server.ts";
-import { friendlyIngestError } from "#/lib/ingest/limits.ts";
 import {
 	clearSourceIndex,
 	persistSourceChunks,
@@ -22,6 +23,8 @@ export type UrlSourceMetadata = {
 	excerpt?: string | null;
 	siteName?: string | null;
 	headings?: string[];
+	/** Section outline with levels, anchors and offsets into `content`. */
+	headingDetails?: ArticleHeading[];
 };
 
 /**
@@ -51,6 +54,7 @@ export async function indexUrlSource(options: {
 		const article = await extractUrlArticle(url);
 		const preparedChunks = chunkArticleText(article.content, {
 			url: article.canonicalUrl,
+			headings: article.headingDetails,
 		});
 
 		if (options.updateTitleFromPage && article.title) {
@@ -85,6 +89,7 @@ export async function indexUrlSource(options: {
 				excerpt: article.excerpt,
 				siteName: article.siteName,
 				headings: article.headings,
+				headingDetails: article.headingDetails,
 			} satisfies UrlSourceMetadata,
 		});
 	} catch (error) {
