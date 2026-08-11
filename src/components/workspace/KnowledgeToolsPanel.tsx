@@ -6,10 +6,8 @@ import {
 	type ToolsTab,
 	ViewerTabs,
 } from "#/components/workspace/ViewerTabs.tsx";
-import type { MessageCitation } from "#/db/schema/messages.ts";
 import type { ChatMessageDTO } from "#/features/chat/chat.functions.ts";
 import type { NotebookDTO } from "#/features/notebooks/notebooks.functions.ts";
-import type { LearningRoadmap } from "#/features/roadmap/roadmap.functions.ts";
 import type { SourceDTO } from "#/features/sources/sources.functions.ts";
 import { cn } from "#/lib/utils.ts";
 
@@ -37,14 +35,6 @@ export function KnowledgeToolsPanel({
 	playbackPlaying?: boolean;
 	onSeekPlayback?: (seconds: number) => void;
 	selectedSource: SourceDTO | null;
-	youtubeReadyCount: number;
-	roadmapFocus: string;
-	onRoadmapFocusChange: (value: string) => void;
-	roadmap: LearningRoadmap | null;
-	isGeneratingRoadmap: boolean;
-	roadmapError: string | null;
-	onGenerateRoadmap: () => void;
-	onOpenClip: (citation: MessageCitation) => void;
 	className?: string;
 }) {
 	return (

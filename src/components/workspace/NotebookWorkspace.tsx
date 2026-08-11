@@ -48,10 +48,6 @@ import {
 	updateNotebook,
 } from "#/features/notebooks/notebooks.functions.ts";
 import {
-	buildLearningRoadmap,
-	type LearningRoadmap,
-} from "#/features/roadmap/roadmap.functions.ts";
-import {
 	createPdfSource,
 	createTextSource,
 	createUrlSource,
@@ -67,6 +63,7 @@ import type {
 	ArtifactDTO,
 	ArtifactSummaryDTO,
 } from "#/features/studio/artifacts.types.ts";
+import { generateLearningRoadmapArtifact } from "#/features/studio/learning-roadmap.functions.ts";
 import { generateResearchBriefArtifact } from "#/features/studio/research-brief.functions.ts";
 import { generateStudyGuideArtifact } from "#/features/studio/study-guide.functions.ts";
 import { useWorkspaceLayout } from "#/hooks/use-workspace-layout.ts";
@@ -126,11 +123,13 @@ export function NotebookWorkspace({
 	const listSourcesFn = useServerFn(listSources);
 	const listMessagesFn = useServerFn(listMessages);
 	const getSourceViewerFn = useServerFn(getSourceViewer);
-	const buildLearningRoadmapFn = useServerFn(buildLearningRoadmap);
 	const updateNotebookFn = useServerFn(updateNotebook);
 	const getArtifactFn = useServerFn(getArtifact);
 	const generateResearchBriefFn = useServerFn(generateResearchBriefArtifact);
 	const generateStudyGuideFn = useServerFn(generateStudyGuideArtifact);
+	const generateLearningRoadmapFn = useServerFn(
+		generateLearningRoadmapArtifact,
+	);
 
 	const [notebookState, setNotebookState] = useState(notebook);
 	const [sources, setSources] = useState(initialSources);
@@ -154,11 +153,6 @@ export function NotebookWorkspace({
 				.map((source) => source.id),
 		),
 	);
-
-	const [roadmap, setRoadmap] = useState<LearningRoadmap | null>(null);
-	const [roadmapFocus, setRoadmapFocus] = useState("");
-	const [isGeneratingRoadmap, setIsGeneratingRoadmap] = useState(false);
-	const [roadmapError, setRoadmapError] = useState<string | null>(null);
 
 	const [artifacts, setArtifacts] = useState(initialArtifacts);
 	const [activeArtifact, setActiveArtifact] = useState<ArtifactDTO | null>(
@@ -396,14 +390,6 @@ export function NotebookWorkspace({
 		[sources],
 	);
 
-	const youtubeReadyCount = useMemo(
-		() =>
-			sources.filter(
-				(source) => source.type === "youtube" && source.status === "ready",
-			).length,
-		[sources],
-	);
-
 	const selectedSource = useMemo(
 		() => sources.find((s) => s.id === viewer?.id) ?? null,
 		[sources, viewer?.id],
@@ -465,17 +451,6 @@ export function NotebookWorkspace({
 		setActiveCitationKey(null);
 		setMobileSourcesOpen(false);
 		await loadViewer({ sourceId });
-	}
-
-	async function openRoadmapClip(citation: MessageCitation) {
-		const key = citationKey("roadmap", citation);
-		setCitationNav([{ ...citation, key }]);
-		setActiveCitationKey(key);
-		setToolsTab("source");
-		await loadViewer({
-			sourceId: citation.sourceId,
-			chunkId: citation.chunkId,
-		});
 	}
 
 	useEffect(() => {
@@ -543,10 +518,12 @@ export function NotebookWorkspace({
 				notebookId: notebook.id,
 				focus: studioFocus.trim() || undefined,
 			};
-			const created =
-				type === "research_brief"
-					? await generateResearchBriefFn({ data })
-					: await generateStudyGuideFn({ data });
+			const generateFn = {
+				research_brief: generateResearchBriefFn,
+				study_guide: generateStudyGuideFn,
+				learning_roadmap: generateLearningRoadmapFn,
+			}[type];
+			const created = await generateFn({ data });
 
 			setArtifacts((prev) => [
 				toArtifactSummary(created),
@@ -577,26 +554,6 @@ export function NotebookWorkspace({
 			sourceId: citation.sourceId,
 			chunkId: citation.chunkId,
 		});
-	}
-
-	async function handleGenerateRoadmap() {
-		setRoadmapError(null);
-		setIsGeneratingRoadmap(true);
-		try {
-			const next = await buildLearningRoadmapFn({
-				data: {
-					notebookId: notebook.id,
-					focus: roadmapFocus.trim() || undefined,
-				},
-			});
-			setRoadmap(next);
-		} catch (err) {
-			setRoadmapError(
-				err instanceof Error ? err.message : "Failed to generate roadmap",
-			);
-		} finally {
-			setIsGeneratingRoadmap(false);
-		}
 	}
 
 	async function handleAddSource(payload: {
@@ -890,14 +847,6 @@ export function NotebookWorkspace({
 			};
 		},
 		selectedSource,
-		youtubeReadyCount,
-		roadmapFocus,
-		onRoadmapFocusChange: setRoadmapFocus,
-		roadmap,
-		isGeneratingRoadmap,
-		roadmapError,
-		onGenerateRoadmap: () => void handleGenerateRoadmap(),
-		onOpenClip: (c: MessageCitation) => void openRoadmapClip(c),
 	};
 
 	const studioProps = {

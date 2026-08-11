@@ -3,6 +3,7 @@ import { LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "#/components/ui/button.tsx";
 import { CitationChips } from "#/components/workspace/CitationChips.tsx";
 import { ArtifactSectionsView } from "#/components/workspace/studio/ArtifactSectionsView.tsx";
+import { LearningRoadmapView } from "#/components/workspace/studio/LearningRoadmapView.tsx";
 import { StudyGuideView } from "#/components/workspace/studio/StudyGuideView.tsx";
 import type { MessageCitation } from "#/db/schema/messages.ts";
 import {
@@ -68,6 +69,12 @@ export function ArtifactDocument({
 
 			{artifact.type === "study_guide" ? (
 				<StudyGuideView
+					artifact={artifact}
+					activeCitationKey={activeCitationKey}
+					onCitationClick={onCitationClick}
+				/>
+			) : artifact.type === "learning_roadmap" ? (
+				<LearningRoadmapView
 					artifact={artifact}
 					activeCitationKey={activeCitationKey}
 					onCitationClick={onCitationClick}

@@ -8,17 +8,14 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "#/components/ui/tabs.tsx";
-import { LearnTab } from "#/components/workspace/tabs/LearnTab.tsx";
 import { MetadataTab } from "#/components/workspace/tabs/MetadataTab.tsx";
 import { SourceTab } from "#/components/workspace/tabs/SourceTab.tsx";
 import { SummaryTab } from "#/components/workspace/tabs/SummaryTab.tsx";
-import type { MessageCitation } from "#/db/schema/messages.ts";
 import type { ChatMessageDTO } from "#/features/chat/chat.functions.ts";
 import type { NotebookDTO } from "#/features/notebooks/notebooks.functions.ts";
-import type { LearningRoadmap } from "#/features/roadmap/roadmap.functions.ts";
 import type { SourceDTO } from "#/features/sources/sources.functions.ts";
 
-export type ToolsTab = "source" | "summary" | "learn" | "metadata";
+export type ToolsTab = "source" | "summary" | "metadata";
 
 export function ViewerTabs({
 	tab,
@@ -41,14 +38,6 @@ export function ViewerTabs({
 	playbackPlaying,
 	onSeekPlayback,
 	selectedSource,
-	youtubeReadyCount,
-	roadmapFocus,
-	onRoadmapFocusChange,
-	roadmap,
-	isGeneratingRoadmap,
-	roadmapError,
-	onGenerateRoadmap,
-	onOpenClip,
 }: {
 	tab: ToolsTab;
 	onTabChange: (tab: ToolsTab) => void;
@@ -70,14 +59,6 @@ export function ViewerTabs({
 	playbackPlaying?: boolean;
 	onSeekPlayback?: (seconds: number) => void;
 	selectedSource: SourceDTO | null;
-	youtubeReadyCount: number;
-	roadmapFocus: string;
-	onRoadmapFocusChange: (value: string) => void;
-	roadmap: LearningRoadmap | null;
-	isGeneratingRoadmap: boolean;
-	roadmapError: string | null;
-	onGenerateRoadmap: () => void;
-	onOpenClip: (citation: MessageCitation) => void;
 }) {
 	return (
 		<Tabs
@@ -92,9 +73,6 @@ export function ViewerTabs({
 					</TabsTrigger>
 					<TabsTrigger value="summary" className="text-xs">
 						Summary
-					</TabsTrigger>
-					<TabsTrigger value="learn" className="text-xs">
-						Learn
 					</TabsTrigger>
 					<TabsTrigger value="metadata" className="text-xs">
 						Metadata
@@ -128,21 +106,6 @@ export function ViewerTabs({
 				className="mt-0 min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
 			>
 				<SummaryTab notebook={notebook} sources={sources} messages={messages} />
-			</TabsContent>
-			<TabsContent
-				value="learn"
-				className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
-			>
-				<LearnTab
-					youtubeReadyCount={youtubeReadyCount}
-					focus={roadmapFocus}
-					onFocusChange={onRoadmapFocusChange}
-					roadmap={roadmap}
-					isGenerating={isGeneratingRoadmap}
-					error={roadmapError}
-					onGenerate={onGenerateRoadmap}
-					onOpenClip={onOpenClip}
-				/>
 			</TabsContent>
 			<TabsContent
 				value="metadata"

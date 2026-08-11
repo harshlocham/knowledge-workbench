@@ -3,6 +3,8 @@ import { z } from "zod";
 import type {
 	ArtifactContent,
 	ArtifactSection,
+	LearningRoadmapData,
+	RoadmapStep,
 	StudyGuideCitedItem,
 	StudyGuideConcept,
 	StudyGuideData,
@@ -13,6 +15,8 @@ import type { MessageCitation } from "#/db/schema/messages.ts";
 export type {
 	ArtifactContent,
 	ArtifactSection,
+	LearningRoadmapData,
+	RoadmapStep,
 	StudyGuideCitedItem,
 	StudyGuideConcept,
 	StudyGuideData,
@@ -37,6 +41,13 @@ export const ARTIFACT_LIMITS = {
 	maxBulletsPerSection: 40,
 	maxCitations: 200,
 	maxErrorLength: 1000,
+} as const;
+
+/** A roadmap is a path, not a syllabus dump: few steps, each worth doing. */
+export const ROADMAP_LIMITS = {
+	maxSteps: 10,
+	maxPrerequisitesPerStep: 3,
+	maxEffortLength: 60,
 } as const;
 
 /** Keeps a guide studyable: depth per concept, not an exhaustive dump. */
@@ -135,10 +146,33 @@ export const studyGuideDataSchema = z.object({
 		.max(STUDY_GUIDE_LIMITS.maxReviewQuestions),
 });
 
+export const roadmapStepSchema = z.object({
+	order: z.number().int().positive(),
+	title: z.string().trim().min(1),
+	description: z.string().trim().min(1),
+	whyItMatters: z.string().trim().min(1),
+	prerequisiteSteps: z
+		.array(z.number().int().positive())
+		.max(ROADMAP_LIMITS.maxPrerequisitesPerStep)
+		.optional(),
+	estimatedEffort: z
+		.string()
+		.trim()
+		.min(1)
+		.max(ROADMAP_LIMITS.maxEffortLength)
+		.optional(),
+	citationNumbers: citationNumbersSchema,
+});
+
+export const learningRoadmapDataSchema = z.object({
+	steps: z.array(roadmapStepSchema).max(ROADMAP_LIMITS.maxSteps),
+});
+
 export const artifactContentSchema = z.object({
 	summary: z.string().optional(),
 	sections: z.array(artifactSectionSchema).max(ARTIFACT_LIMITS.maxSections),
 	studyGuide: studyGuideDataSchema.optional(),
+	learningRoadmap: learningRoadmapDataSchema.optional(),
 });
 
 export const artifactTitleSchema = z
