@@ -63,6 +63,7 @@ import type {
 	ArtifactDTO,
 	ArtifactSummaryDTO,
 } from "#/features/studio/artifacts.types.ts";
+import { generateCompareSourcesArtifact } from "#/features/studio/compare-sources.functions.ts";
 import { generateLearningRoadmapArtifact } from "#/features/studio/learning-roadmap.functions.ts";
 import { generateResearchBriefArtifact } from "#/features/studio/research-brief.functions.ts";
 import { generateStudyGuideArtifact } from "#/features/studio/study-guide.functions.ts";
@@ -130,6 +131,7 @@ export function NotebookWorkspace({
 	const generateLearningRoadmapFn = useServerFn(
 		generateLearningRoadmapArtifact,
 	);
+	const generateCompareSourcesFn = useServerFn(generateCompareSourcesArtifact);
 
 	const [notebookState, setNotebookState] = useState(notebook);
 	const [sources, setSources] = useState(initialSources);
@@ -522,6 +524,7 @@ export function NotebookWorkspace({
 				research_brief: generateResearchBriefFn,
 				study_guide: generateStudyGuideFn,
 				learning_roadmap: generateLearningRoadmapFn,
+				compare_sources: generateCompareSourcesFn,
 			}[type];
 			const created = await generateFn({ data });
 
@@ -867,6 +870,18 @@ export function NotebookWorkspace({
 		activeCitationKey,
 		onCitationClick: (c: MessageCitation, ownerId: string) =>
 			void openArtifactCitation(c, ownerId),
+		onArtifactPatch: (patch: Partial<ArtifactDTO>) => {
+			setActiveArtifact((current) =>
+				current ? { ...current, ...patch } : current,
+			);
+			setArtifacts((list) =>
+				list.map((row) =>
+					activeArtifactId && row.id === activeArtifactId
+						? { ...row, ...patch }
+						: row,
+				),
+			);
+		},
 	};
 
 	const sourcesSidebarProps = {

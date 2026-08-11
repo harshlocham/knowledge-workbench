@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
+import { Route as ShareTokenRouteImport } from './routes/share/$token'
 import { Route as AuthenticatedNotebooksIndexRouteImport } from './routes/_authenticated/notebooks/index'
 import { Route as AuthenticatedNotebooksNotebookIdRouteImport } from './routes/_authenticated/notebooks/$notebookId'
 import { Route as ApiNotebooksNotebookIdAskRouteImport } from './routes/api/notebooks/$notebookId/ask'
@@ -23,6 +24,11 @@ const IndexRoute = IndexRouteImport.update({
 } as any)
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShareTokenRoute = ShareTokenRouteImport.update({
+  id: '/share/$token',
+  path: '/share/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedNotebooksIndexRoute =
@@ -52,6 +58,7 @@ const ApiNotebooksNotebookIdSourceEventsRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/share/$token': typeof ShareTokenRoute
   '/notebooks/$notebookId': typeof AuthenticatedNotebooksNotebookIdRoute
   '/notebooks/': typeof AuthenticatedNotebooksIndexRoute
   '/api/notebooks/$notebookId/ask': typeof ApiNotebooksNotebookIdAskRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/share/$token': typeof ShareTokenRoute
   '/notebooks/$notebookId': typeof AuthenticatedNotebooksNotebookIdRoute
   '/notebooks': typeof AuthenticatedNotebooksIndexRoute
   '/api/notebooks/$notebookId/ask': typeof ApiNotebooksNotebookIdAskRoute
@@ -68,6 +76,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteWithChildren
+  '/share/$token': typeof ShareTokenRoute
   '/_authenticated/notebooks/$notebookId': typeof AuthenticatedNotebooksNotebookIdRoute
   '/_authenticated/notebooks/': typeof AuthenticatedNotebooksIndexRoute
   '/api/notebooks/$notebookId/ask': typeof ApiNotebooksNotebookIdAskRoute
@@ -77,6 +86,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/share/$token'
     | '/notebooks/$notebookId'
     | '/notebooks/'
     | '/api/notebooks/$notebookId/ask'
@@ -84,6 +94,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/share/$token'
     | '/notebooks/$notebookId'
     | '/notebooks'
     | '/api/notebooks/$notebookId/ask'
@@ -92,6 +103,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_authenticated'
+    | '/share/$token'
     | '/_authenticated/notebooks/$notebookId'
     | '/_authenticated/notebooks/'
     | '/api/notebooks/$notebookId/ask'
@@ -101,6 +113,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
+  ShareTokenRoute: typeof ShareTokenRoute
   ApiNotebooksNotebookIdAskRoute: typeof ApiNotebooksNotebookIdAskRoute
   ApiNotebooksNotebookIdSourceEventsRoute: typeof ApiNotebooksNotebookIdSourceEventsRoute
 }
@@ -119,6 +132,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AuthenticatedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/share/$token': {
+      id: '/share/$token'
+      path: '/share/$token'
+      fullPath: '/share/$token'
+      preLoaderRoute: typeof ShareTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/notebooks/': {
@@ -169,6 +189,7 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
+  ShareTokenRoute: ShareTokenRoute,
   ApiNotebooksNotebookIdAskRoute: ApiNotebooksNotebookIdAskRoute,
   ApiNotebooksNotebookIdSourceEventsRoute:
     ApiNotebooksNotebookIdSourceEventsRoute,

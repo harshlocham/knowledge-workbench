@@ -5,6 +5,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 
@@ -99,6 +100,45 @@ export type LearningRoadmapData = {
 	steps: RoadmapStep[];
 };
 
+/** A short claim with citations — used for agreements, disagreements, etc. */
+export type CompareCitedItem = {
+	text: string;
+	citationNumbers: number[];
+};
+
+export type CompareSourceInsight = {
+	sourceId: string;
+	sourceTitle: string;
+	items: CompareCitedItem[];
+};
+
+export type CompareTableEntry = {
+	sourceId: string;
+	sourceTitle: string;
+	position: string;
+	citationNumbers: number[];
+};
+
+export type CompareTableRow = {
+	claim: string;
+	entries: CompareTableEntry[];
+};
+
+/**
+ * Structured Compare Sources payload. Kept alongside the generic `sections`
+ * projection so the UI can render the comparison table and per-source insights
+ * without re-parsing markdown.
+ */
+export type CompareSourcesData = {
+	overview: string;
+	sharedUnderstanding: CompareCitedItem[];
+	agreements: CompareCitedItem[];
+	disagreements: CompareCitedItem[];
+	sourceSpecificInsights: CompareSourceInsight[];
+	comparisonTable: CompareTableRow[];
+	conclusion: CompareCitedItem[];
+};
+
 export type ArtifactContent = {
 	summary?: string;
 	sections: ArtifactSection[];
@@ -106,6 +146,8 @@ export type ArtifactContent = {
 	studyGuide?: StudyGuideData;
 	/** Present on `learning_roadmap` artifacts only. */
 	learningRoadmap?: LearningRoadmapData;
+	/** Present on `compare_sources` artifacts only. */
+	compareSources?: CompareSourcesData;
 };
 
 export const artifacts = pgTable(
@@ -136,6 +178,17 @@ export const artifacts = pgTable(
 
 		errorMessage: text("error_message"),
 
+		/**
+		 * Cryptographically random bearer token for a public read-only share link.
+		 * Null means the artifact is not shared. Never use the artifact UUID as the
+		 * public identifier.
+		 */
+		shareToken: text("share_token"),
+
+		sharedAt: timestamp("shared_at", {
+			withTimezone: true,
+		}),
+
 		createdAt: timestamp("created_at", {
 			withTimezone: true,
 		})
@@ -155,5 +208,6 @@ export const artifacts = pgTable(
 			table.createdAt,
 		),
 		index("artifacts_owner_id_idx").on(table.ownerId),
+		uniqueIndex("artifacts_share_token_uidx").on(table.shareToken),
 	],
 );

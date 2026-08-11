@@ -1,10 +1,14 @@
-export { notebooks } from "./notebooks.ts";
 export {
-	artifacts,
-	artifactStatusEnum,
-	artifactTypeEnum,
 	type ArtifactContent,
 	type ArtifactSection,
+	artifactStatusEnum,
+	artifacts,
+	artifactTypeEnum,
+	type CompareCitedItem,
+	type CompareSourceInsight,
+	type CompareSourcesData,
+	type CompareTableEntry,
+	type CompareTableRow,
 	type LearningRoadmapData,
 	type RoadmapStep,
 	type StudyGuideCitedItem,
@@ -13,16 +17,17 @@ export {
 	type StudyGuideReviewQuestion,
 } from "./artifacts.ts";
 export {
-	chunks,
 	type ChunkLocator,
+	chunks,
 } from "./chunks.ts";
 export {
-	messages,
-	messageRoleEnum,
 	type MessageCitation,
+	messageRoleEnum,
+	messages,
 } from "./messages.ts";
+export { notebooks } from "./notebooks.ts";
 export {
-	sources,
 	sourceStatusEnum,
+	sources,
 	sourceTypeEnum,
 } from "./sources.ts";

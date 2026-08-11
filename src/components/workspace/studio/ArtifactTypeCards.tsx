@@ -15,7 +15,8 @@ import type { ArtifactType } from "#/features/studio/artifacts.types.ts";
 export type StudioArtifactType =
 	| "research_brief"
 	| "study_guide"
-	| "learning_roadmap";
+	| "learning_roadmap"
+	| "compare_sources";
 
 type CardCopy = {
 	icon: LucideIcon;
@@ -60,7 +61,7 @@ const CARDS: CardSpec[] = [
 		title: "Compare Sources",
 		description:
 			"See where your sources agree, differ and fill each other's gaps.",
-		available: false,
+		available: true,
 	},
 ];
 

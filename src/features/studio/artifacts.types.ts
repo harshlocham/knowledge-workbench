@@ -3,6 +3,11 @@ import { z } from "zod";
 import type {
 	ArtifactContent,
 	ArtifactSection,
+	CompareCitedItem,
+	CompareSourceInsight,
+	CompareSourcesData,
+	CompareTableEntry,
+	CompareTableRow,
 	LearningRoadmapData,
 	RoadmapStep,
 	StudyGuideCitedItem,
@@ -15,6 +20,11 @@ import type { MessageCitation } from "#/db/schema/messages.ts";
 export type {
 	ArtifactContent,
 	ArtifactSection,
+	CompareCitedItem,
+	CompareSourceInsight,
+	CompareSourcesData,
+	CompareTableEntry,
+	CompareTableRow,
 	LearningRoadmapData,
 	RoadmapStep,
 	StudyGuideCitedItem,
@@ -60,11 +70,21 @@ export const STUDY_GUIDE_LIMITS = {
 	maxReviewQuestions: 8,
 } as const;
 
+/** Caps so a comparison stays readable rather than listing every paraphrase. */
+export const COMPARE_SOURCES_LIMITS = {
+	maxSharedUnderstanding: 8,
+	maxAgreements: 8,
+	maxDisagreements: 8,
+	maxInsightsPerSource: 5,
+	maxTableRows: 8,
+	maxConclusion: 5,
+} as const;
+
 /** Default titles used when a caller does not supply one. */
 export const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
 	research_brief: "Research Brief",
 	study_guide: "Study Guide",
-	compare_sources: "Source Comparison",
+	compare_sources: "Compare Sources",
 	learning_roadmap: "Learning Roadmap",
 };
 
@@ -168,11 +188,57 @@ export const learningRoadmapDataSchema = z.object({
 	steps: z.array(roadmapStepSchema).max(ROADMAP_LIMITS.maxSteps),
 });
 
+export const compareCitedItemSchema = z.object({
+	text: z.string().trim().min(1),
+	citationNumbers: citationNumbersSchema,
+});
+
+export const compareSourceInsightSchema = z.object({
+	sourceId: z.string().uuid(),
+	sourceTitle: z.string().trim().min(1),
+	items: z
+		.array(compareCitedItemSchema)
+		.max(COMPARE_SOURCES_LIMITS.maxInsightsPerSource),
+});
+
+export const compareTableEntrySchema = z.object({
+	sourceId: z.string().uuid(),
+	sourceTitle: z.string().trim().min(1),
+	position: z.string().trim().min(1),
+	citationNumbers: citationNumbersSchema,
+});
+
+export const compareTableRowSchema = z.object({
+	claim: z.string().trim().min(1),
+	entries: z.array(compareTableEntrySchema).min(2),
+});
+
+export const compareSourcesDataSchema = z.object({
+	overview: z.string().trim().min(1),
+	sharedUnderstanding: z
+		.array(compareCitedItemSchema)
+		.max(COMPARE_SOURCES_LIMITS.maxSharedUnderstanding),
+	agreements: z
+		.array(compareCitedItemSchema)
+		.max(COMPARE_SOURCES_LIMITS.maxAgreements),
+	disagreements: z
+		.array(compareCitedItemSchema)
+		.max(COMPARE_SOURCES_LIMITS.maxDisagreements),
+	sourceSpecificInsights: z.array(compareSourceInsightSchema),
+	comparisonTable: z
+		.array(compareTableRowSchema)
+		.max(COMPARE_SOURCES_LIMITS.maxTableRows),
+	conclusion: z
+		.array(compareCitedItemSchema)
+		.max(COMPARE_SOURCES_LIMITS.maxConclusion),
+});
+
 export const artifactContentSchema = z.object({
 	summary: z.string().optional(),
 	sections: z.array(artifactSectionSchema).max(ARTIFACT_LIMITS.maxSections),
 	studyGuide: studyGuideDataSchema.optional(),
 	learningRoadmap: learningRoadmapDataSchema.optional(),
+	compareSources: compareSourcesDataSchema.optional(),
 });
 
 export const artifactTitleSchema = z
@@ -191,6 +257,8 @@ export type ArtifactDTO = {
 	content: ArtifactContent | null;
 	citations: MessageCitation[];
 	errorMessage: string | null;
+	/** True when a public share token is currently active. Token itself is never listed. */
+	isShared: boolean;
 	createdAt: string;
 	updatedAt: string;
 };

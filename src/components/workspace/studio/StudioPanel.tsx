@@ -23,6 +23,7 @@ const GENERATABLE_TYPES = new Set<ArtifactType>([
 	"research_brief",
 	"study_guide",
 	"learning_roadmap",
+	"compare_sources",
 ]);
 
 function isGeneratable(type: ArtifactType): type is StudioArtifactType {
@@ -52,6 +53,7 @@ export type StudioPanelProps = {
 	onSelectArtifact: (artifactId: string) => void;
 	activeCitationKey: string | null;
 	onCitationClick: (citation: MessageCitation, ownerId: string) => void;
+	onArtifactPatch?: (patch: Partial<ArtifactDTO>) => void;
 };
 
 export function StudioPanel({
@@ -68,6 +70,7 @@ export function StudioPanel({
 	onSelectArtifact,
 	activeCitationKey,
 	onCitationClick,
+	onArtifactPatch,
 }: StudioPanelProps) {
 	const noEvidence = readyCount === 0;
 	const pendingTypes = new Set(
@@ -218,6 +221,7 @@ export function StudioPanel({
 							(activeType != null && pendingTypes.has(activeType))
 						}
 						canRegenerate={canRegenerate}
+						onArtifactPatch={onArtifactPatch}
 					/>
 				) : null}
 			</div>
