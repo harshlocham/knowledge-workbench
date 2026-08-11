@@ -3,10 +3,21 @@ import { z } from "zod";
 import type {
 	ArtifactContent,
 	ArtifactSection,
+	StudyGuideCitedItem,
+	StudyGuideConcept,
+	StudyGuideData,
+	StudyGuideReviewQuestion,
 } from "#/db/schema/artifacts.ts";
 import type { MessageCitation } from "#/db/schema/messages.ts";
 
-export type { ArtifactContent, ArtifactSection };
+export type {
+	ArtifactContent,
+	ArtifactSection,
+	StudyGuideCitedItem,
+	StudyGuideConcept,
+	StudyGuideData,
+	StudyGuideReviewQuestion,
+};
 
 export const ARTIFACT_TYPES = [
 	"research_brief",
@@ -26,6 +37,16 @@ export const ARTIFACT_LIMITS = {
 	maxBulletsPerSection: 40,
 	maxCitations: 200,
 	maxErrorLength: 1000,
+} as const;
+
+/** Keeps a guide studyable: depth per concept, not an exhaustive dump. */
+export const STUDY_GUIDE_LIMITS = {
+	maxPrerequisites: 6,
+	maxConcepts: 10,
+	maxKeyPointsPerConcept: 5,
+	maxExamples: 6,
+	maxPitfalls: 6,
+	maxReviewQuestions: 8,
 } as const;
 
 /** Default titles used when a caller does not supply one. */
@@ -73,9 +94,51 @@ export const artifactSectionSchema = z.object({
 	citationNumbers: z.array(z.number().int().positive()).optional(),
 });
 
+const citationNumbersSchema = z.array(z.number().int().positive());
+
+export const studyGuideCitedItemSchema = z.object({
+	title: z.string().trim().min(1),
+	explanation: z.string().trim().min(1),
+	citationNumbers: citationNumbersSchema,
+});
+
+export const studyGuideConceptSchema = z.object({
+	name: z.string().trim().min(1),
+	explanation: z.string().trim().min(1),
+	keyPoints: z
+		.array(z.string().trim().min(1))
+		.max(STUDY_GUIDE_LIMITS.maxKeyPointsPerConcept),
+	citationNumbers: citationNumbersSchema,
+});
+
+export const studyGuideReviewQuestionSchema = z.object({
+	question: z.string().trim().min(1),
+	answer: z.string().trim().min(1),
+	citationNumbers: citationNumbersSchema,
+});
+
+export const studyGuideDataSchema = z.object({
+	prerequisites: z
+		.array(studyGuideCitedItemSchema)
+		.max(STUDY_GUIDE_LIMITS.maxPrerequisites),
+	concepts: z
+		.array(studyGuideConceptSchema)
+		.max(STUDY_GUIDE_LIMITS.maxConcepts),
+	examples: z
+		.array(studyGuideCitedItemSchema)
+		.max(STUDY_GUIDE_LIMITS.maxExamples),
+	pitfalls: z
+		.array(studyGuideCitedItemSchema)
+		.max(STUDY_GUIDE_LIMITS.maxPitfalls),
+	reviewQuestions: z
+		.array(studyGuideReviewQuestionSchema)
+		.max(STUDY_GUIDE_LIMITS.maxReviewQuestions),
+});
+
 export const artifactContentSchema = z.object({
 	summary: z.string().optional(),
 	sections: z.array(artifactSectionSchema).max(ARTIFACT_LIMITS.maxSections),
+	studyGuide: studyGuideDataSchema.optional(),
 });
 
 export const artifactTitleSchema = z

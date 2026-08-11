@@ -57,7 +57,11 @@ function normalizeCitations(citations: MessageCitation[]): MessageCitation[] {
 	}));
 }
 
-/** Sections may only reference citations that exist on the artifact. */
+/**
+ * Content may only reference citations that exist on the artifact — both the
+ * rendered sections and the typed payloads that back them, so a generator bug
+ * can never persist a citation number that resolves to nothing.
+ */
 function assertCitationsResolve(
 	content: ArtifactContent | null,
 	citations: MessageCitation[],
@@ -70,14 +74,40 @@ function assertCitationsResolve(
 		citations.map((citation, i) => citation.citationNumber ?? i + 1),
 	);
 
-	for (const section of content.sections) {
-		for (const number of section.citationNumbers ?? []) {
+	const assertResolves = (label: string, numbers: number[] | undefined) => {
+		for (const number of numbers ?? []) {
 			if (!available.has(number)) {
 				throw new Error(
-					`Section "${section.heading}" cites [${number}], which has no matching citation`,
+					`${label} cites [${number}], which has no matching citation`,
 				);
 			}
 		}
+	};
+
+	for (const section of content.sections) {
+		assertResolves(`Section "${section.heading}"`, section.citationNumbers);
+	}
+
+	const guide = content.studyGuide;
+	if (!guide) {
+		return;
+	}
+
+	for (const item of [
+		...guide.prerequisites,
+		...guide.examples,
+		...guide.pitfalls,
+	]) {
+		assertResolves(`Study guide item "${item.title}"`, item.citationNumbers);
+	}
+	for (const concept of guide.concepts) {
+		assertResolves(`Concept "${concept.name}"`, concept.citationNumbers);
+	}
+	for (const question of guide.reviewQuestions) {
+		assertResolves(
+			`Review question "${question.question}"`,
+			question.citationNumbers,
+		);
 	}
 }
 

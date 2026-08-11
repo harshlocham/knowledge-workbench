@@ -5,9 +5,17 @@ import type {
 	ArtifactContent,
 	ArtifactSection,
 } from "#/db/schema/artifacts.ts";
-import type { ChunkLocator } from "#/db/schema/chunks.ts";
 import type { MessageCitation } from "#/db/schema/messages.ts";
-import { formatChunkClock } from "#/lib/rag/chunk-vtt.ts";
+import {
+	type ArtifactEvidence,
+	createCitationMapper,
+	stripCitationMarkers,
+	withCitationMarkers,
+} from "#/lib/rag/artifact-citations.ts";
+import {
+	formatEvidenceBlock,
+	insufficientEvidenceError,
+} from "#/lib/rag/artifact-evidence.server.ts";
 
 function getOpenAIClient() {
 	const apiKey = process.env.OPENAI_API_KEY;
@@ -22,7 +30,6 @@ function getChatModel() {
 	return process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
 }
 
-const MAX_QUOTE_LENGTH = 280;
 const MAX_EVIDENCE_PER_CLAIM = 4;
 const MAX_BULLETS_PER_SECTION = 8;
 
@@ -31,15 +38,7 @@ const MIN_EVIDENCE_FOR_BRIEF = 4;
 const MIN_CITATIONS_FOR_READY = 3;
 const MIN_SECTIONS_FOR_READY = 3;
 
-export type BriefEvidenceInput = {
-	/** 1-based number shown to the model. */
-	index: number;
-	chunkId: string;
-	sourceId: string;
-	sourceTitle: string;
-	text: string;
-	locator: ChunkLocator;
-};
+export type BriefEvidenceInput = ArtifactEvidence;
 
 const claimSchema = z.object({
 	text: z.string(),
@@ -130,33 +129,6 @@ export type ResearchBrief = {
 	sourceCount: number;
 };
 
-function evidenceLabel(locator: ChunkLocator) {
-	if (typeof locator.tStart === "number") {
-		return typeof locator.tEnd === "number"
-			? ` @ ${formatChunkClock(locator.tStart)}–${formatChunkClock(locator.tEnd)}`
-			: ` @ ${formatChunkClock(locator.tStart)}`;
-	}
-	if (typeof locator.page === "number") {
-		return ` (p. ${locator.page})`;
-	}
-	if (locator.heading) {
-		return ` — ${locator.heading}`;
-	}
-	return "";
-}
-
-/**
- * Model-written `[n]` markers are discarded and rebuilt from the validated
- * evidence indexes, so rendered numbers can never point at missing evidence.
- */
-function stripCitationMarkers(text: string) {
-	return text
-		.replace(/\[\d+\]/g, "")
-		.replace(/\s+([.,;:!?])/g, "$1")
-		.replace(/\s{2,}/g, " ")
-		.trim();
-}
-
 function buildJsonShape(plan: BriefSectionSpec[]) {
 	const lines = [
 		"{",
@@ -217,24 +189,13 @@ export async function generateResearchBrief(options: {
 	const distinctSourceCount = sourceIds.size;
 
 	if (evidence.length < MIN_EVIDENCE_FOR_BRIEF) {
-		throw new Error(
-			evidence.length === 0
-				? "No indexed evidence was found in this notebook. Add or re-index sources, then try again."
-				: `Only ${evidence.length} usable excerpt${
-						evidence.length === 1 ? "" : "s"
-					} could be retrieved, which is not enough for a trustworthy brief. Add more sources (or longer ones) and try again.`,
-		);
+		throw insufficientEvidenceError(evidence.length, "brief");
 	}
 
 	const isMultiSource = distinctSourceCount >= 2;
 	const plan = isMultiSource ? MULTI_SOURCE_SECTIONS : SINGLE_SOURCE_SECTIONS;
 
-	const evidenceBlock = evidence
-		.map(
-			(item) =>
-				`[${item.index}] "${item.sourceTitle}"${evidenceLabel(item.locator)}\n${item.text}`,
-		)
-		.join("\n\n");
+	const evidenceBlock = formatEvidenceBlock(evidence);
 
 	const client = getOpenAIClient();
 	const completion = await client.chat.completions.create({
@@ -274,72 +235,16 @@ Return the JSON research brief now.`,
 		throw new Error("Research brief model returned unexpected shape");
 	}
 
-	const evidenceByIndex = new Map(evidence.map((item) => [item.index, item]));
-	const citationNumberByEvidence = new Map<number, number>();
-	const citations: MessageCitation[] = [];
-
-	/** Assigns (or reuses) a 1-based citation number for validated evidence. */
-	const cite = (evidenceIndex: number): number | null => {
-		const item = evidenceByIndex.get(evidenceIndex);
-		if (!item) {
-			return null;
-		}
-
-		const existing = citationNumberByEvidence.get(evidenceIndex);
-		if (existing !== undefined) {
-			return existing;
-		}
-
-		const citationNumber = citations.length + 1;
-		citationNumberByEvidence.set(evidenceIndex, citationNumber);
-		citations.push({
-			chunkId: item.chunkId,
-			sourceId: item.sourceId,
-			sourceTitle: item.sourceTitle,
-			quote: item.text.slice(0, MAX_QUOTE_LENGTH),
-			locator: item.locator,
-			citationNumber,
-		});
-
-		return citationNumber;
-	};
+	const mapper = createCitationMapper(evidence);
 
 	/**
 	 * Validates a claim without numbering it yet: a claim we later drop must not
 	 * leave an orphan citation behind in the footer.
 	 */
-	const resolveClaim = (claim: LlmClaim) => {
-		const text = stripCitationMarkers(claim.text ?? "");
-		const indexes: number[] = [];
-		const claimSourceIds = new Set<string>();
-
-		for (const index of [...new Set(claim.evidenceIndexes)]) {
-			if (indexes.length >= MAX_EVIDENCE_PER_CLAIM) break;
-			const item = evidenceByIndex.get(index);
-			if (!item) continue;
-			indexes.push(index);
-			claimSourceIds.add(item.sourceId);
-		}
-
-		return { text, indexes, sourceIds: claimSourceIds };
-	};
-
-	/** Turns a kept claim's evidence into rendered citation numbers. */
-	const commitCitations = (indexes: number[]) => {
-		const numbers: number[] = [];
-		for (const index of indexes) {
-			const citationNumber = cite(index);
-			if (citationNumber !== null) {
-				numbers.push(citationNumber);
-			}
-		}
-		return numbers;
-	};
-
-	const withMarkers = (text: string, numbers: number[]) =>
-		numbers.length > 0
-			? `${text} ${numbers.map((n) => `[${n}]`).join(" ")}`
-			: text;
+	const resolveClaim = (claim: LlmClaim) => ({
+		text: stripCitationMarkers(claim.text ?? ""),
+		...mapper.validate(claim.evidenceIndexes, MAX_EVIDENCE_PER_CLAIM),
+	});
 
 	const sections: ArtifactSection[] = [];
 
@@ -348,10 +253,10 @@ Return the JSON research brief now.`,
 		throw new Error("Research brief is missing an executive summary");
 	}
 
-	const summaryNumbers = commitCitations(summary.indexes);
+	const summaryNumbers = mapper.commit(summary.indexes);
 	sections.push({
 		heading: "Executive Summary",
-		body: withMarkers(summary.text, summaryNumbers),
+		body: withCitationMarkers(summary.text, summaryNumbers),
 		citationNumbers: summaryNumbers,
 	});
 
@@ -368,12 +273,12 @@ Return the JSON research brief now.`,
 			// Agreement/disagreement must actually span sources, not restate one.
 			if (spec.requiresCrossSource && claimSourceIds.size < 2) continue;
 
-			const numbers = commitCitations(indexes);
+			const numbers = mapper.commit(indexes);
 			for (const number of numbers) {
 				sectionNumbers.add(number);
 			}
 
-			bullets.push(withMarkers(text, numbers));
+			bullets.push(withCitationMarkers(text, numbers));
 		}
 
 		if (bullets.length === 0) continue;
@@ -384,6 +289,8 @@ Return the JSON research brief now.`,
 			citationNumbers: [...sectionNumbers],
 		});
 	}
+
+	const citations = mapper.citations();
 
 	if (
 		citations.length < MIN_CITATIONS_FOR_READY ||

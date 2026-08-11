@@ -1,6 +1,6 @@
 import { friendlyIngestError } from "#/lib/ingest/limits.ts";
 import { collectArtifactEvidence } from "#/lib/rag/artifact-evidence.server.ts";
-import { generateResearchBrief } from "#/lib/rag/generate-research-brief.server.ts";
+import { generateStudyGuide } from "#/lib/rag/generate-study-guide.server.ts";
 import { markArtifactFailed } from "./artifact-generation.server.ts";
 import { listReadyNotebookSources } from "./artifact-sources.server.ts";
 import {
@@ -9,26 +9,29 @@ import {
 } from "./artifacts.store.server.ts";
 
 /**
- * A brief needs evidence about the notebook as a whole, not one question, so we
- * run a few complementary probes through the existing retrieval pipeline and
- * merge the results. Retrieval behaviour itself is untouched.
+ * A study guide needs teaching material — definitions, dependencies, worked
+ * examples, gotchas — rather than the brief's claim-and-conclusion evidence, so
+ * it runs its own probes through the existing retrieval pipeline.
  */
-const BRIEF_PROBES = [
-	"main claims, findings and conclusions",
-	"methods, data and evidence used to support the conclusions",
-	"limitations, caveats, risks and unanswered questions",
-	"disagreements, contradictions and competing explanations",
-	"practical recommendations and next steps",
+const STUDY_GUIDE_PROBES = [
+	"core concepts, definitions and what each one means",
+	"key terminology, jargon and acronyms explained",
+	"how the concepts relate to, build on or depend on each other",
+	"prerequisites, assumed background knowledge and required setup",
+	"worked examples, code walkthroughs and step-by-step demonstrations",
+	"common mistakes, gotchas, misconceptions and debugging advice",
+	"rules, constraints, defaults and facts worth memorising",
 ] as const;
 
 const PROBE_FINAL_LIMIT = 8;
-const MAX_EVIDENCE_TOTAL = 32;
+/** Larger than a brief's budget: a guide covers a syllabus, not a thesis. */
+const MAX_EVIDENCE_TOTAL = 40;
 
 /**
  * Runs generation for an existing pending artifact and moves it to `ready` or
  * `failed`. Safe to call from a background job: it never throws.
  */
-export async function runResearchBriefGeneration(options: {
+export async function runStudyGuideGeneration(options: {
 	artifactId: string;
 	notebookId: string;
 	ownerId: string;
@@ -55,14 +58,14 @@ export async function runResearchBriefGeneration(options: {
 		const evidence = await collectArtifactEvidence({
 			notebookId: options.notebookId,
 			ownerId: options.ownerId,
-			probes: focus ? [focus, ...BRIEF_PROBES] : BRIEF_PROBES,
+			probes: focus ? [focus, ...STUDY_GUIDE_PROBES] : STUDY_GUIDE_PROBES,
 			sourceTitleById,
 			maxTotal: MAX_EVIDENCE_TOTAL,
 			probeFinalLimit: PROBE_FINAL_LIMIT,
-			label: "research-brief",
+			label: "study-guide",
 		});
 
-		const brief = await generateResearchBrief({
+		const guide = await generateStudyGuide({
 			evidence,
 			readySourceCount: sourceTitleById.size,
 			notebookTitle: options.notebookTitle,
@@ -78,18 +81,18 @@ export async function runResearchBriefGeneration(options: {
 			artifactId,
 			{
 				status: "ready",
-				title: brief.title,
-				content: brief.content,
-				citations: brief.citations,
+				title: guide.title,
+				content: guide.content,
+				citations: guide.citations,
 				errorMessage: null,
 			},
 			row,
 		);
 	} catch (error) {
-		console.error("[research-brief] generation failed", error);
+		console.error("[study-guide] generation failed", error);
 		await markArtifactFailed(
 			artifactId,
-			friendlyIngestError(error, "Failed to generate research brief"),
+			friendlyIngestError(error, "Failed to generate study guide"),
 		);
 	}
 }
