@@ -1,5 +1,5 @@
-import { desc, eq } from "drizzle-orm";
 import { notFound } from "@tanstack/react-router";
+import { desc, eq } from "drizzle-orm";
 
 import { db } from "#/db/index.ts";
 import { artifacts } from "#/db/schema/artifacts.ts";
@@ -27,6 +27,7 @@ export function toArtifactDTO(row: ArtifactRow): ArtifactDTO {
 		content: row.content ?? null,
 		citations: row.citations ?? [],
 		errorMessage: row.errorMessage,
+		isShared: Boolean(row.shareToken),
 		createdAt: row.createdAt.toISOString(),
 		updatedAt: row.updatedAt.toISOString(),
 	};
@@ -111,6 +112,34 @@ function assertCitationsResolve(
 	for (const step of content.learningRoadmap?.steps ?? []) {
 		assertResolves(`Roadmap step "${step.title}"`, step.citationNumbers);
 	}
+
+	const compare = content.compareSources;
+	if (compare) {
+		for (const item of [
+			...compare.sharedUnderstanding,
+			...compare.agreements,
+			...compare.disagreements,
+			...compare.conclusion,
+		]) {
+			assertResolves("Compare Sources item", item.citationNumbers);
+		}
+		for (const insight of compare.sourceSpecificInsights) {
+			for (const item of insight.items) {
+				assertResolves(
+					`Compare Sources insight for "${insight.sourceTitle}"`,
+					item.citationNumbers,
+				);
+			}
+		}
+		for (const row of compare.comparisonTable) {
+			for (const entry of row.entries) {
+				assertResolves(
+					`Compare Sources table "${row.claim}"`,
+					entry.citationNumbers,
+				);
+			}
+		}
+	}
 }
 
 export async function insertArtifact(input: {
@@ -173,6 +202,8 @@ export type ArtifactPatch = {
 	content?: ArtifactContent | null;
 	citations?: MessageCitation[];
 	errorMessage?: string | null;
+	shareToken?: string | null;
+	sharedAt?: Date | null;
 };
 
 /**
@@ -229,6 +260,12 @@ export async function updateArtifactById(
 	if (patch.errorMessage !== undefined) {
 		updates.errorMessage = patch.errorMessage;
 	}
+	if (patch.shareToken !== undefined) {
+		updates.shareToken = patch.shareToken;
+	}
+	if (patch.sharedAt !== undefined) {
+		updates.sharedAt = patch.sharedAt;
+	}
 
 	const [row] = await db
 		.update(artifacts)
@@ -241,6 +278,27 @@ export async function updateArtifactById(
 	}
 
 	return toArtifactDTO(row);
+}
+
+/**
+ * Public share lookup by bearer token. Returns null when the token is missing,
+ * revoked, or the artifact is not ready — callers should treat all three as
+ * not-found so revoked and invalid tokens look the same.
+ */
+export async function getArtifactByShareToken(
+	shareToken: string,
+): Promise<ArtifactRow | null> {
+	const [row] = await db
+		.select()
+		.from(artifacts)
+		.where(eq(artifacts.shareToken, shareToken))
+		.limit(1);
+
+	if (!row || row.status !== "ready" || !row.content) {
+		return null;
+	}
+
+	return row;
 }
 
 export async function deleteArtifactById(artifactId: string) {
