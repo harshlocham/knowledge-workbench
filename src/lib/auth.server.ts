@@ -1,16 +1,16 @@
 import { auth } from "@clerk/tanstack-react-start/server";
 
 export async function requireUserId() {
-  const { userId } = await auth();
+	const { userId } = await auth();
 
-  if (!userId) {
-    throw new Error("Unauthorized");
-  }
+	if (!userId) {
+		throw new Error("Unauthorized");
+	}
 
-  return userId;
+	return userId;
 }
 
 export async function getOptionalUserId() {
-  const { userId } = await auth();
-  return userId ?? null;
+	const { userId } = await auth();
+	return userId ?? null;
 }
