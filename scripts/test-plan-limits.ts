@@ -114,12 +114,12 @@ test("7. Failed pre-validation does not increment usage", () => {
 	assert.equal(used, 2);
 });
 
-test("8. Post-accept failure still counted (consume-before-insert policy)", () => {
+test("8. Post-accept failure still counted (accepted-attempt policy)", () => {
 	let used = 1;
 	const accepted = tryConsumeUsage(used, FREE.monthlyStudioGenerations);
 	assert.equal(accepted.ok, true);
 	if (accepted.ok) used = accepted.next;
-	// Background LLM fails afterward — quantity is not refunded.
+	// Background LLM fails afterward — accepted attempts are not refunded.
 	const failedGeneration = true;
 	assert.equal(failedGeneration, true);
 	assert.equal(used, 2);

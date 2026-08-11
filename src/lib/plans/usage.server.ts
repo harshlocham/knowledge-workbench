@@ -48,9 +48,13 @@ export async function getStudioUsage(
 /**
  * Atomically consumes one Studio generation for the current UTC month.
  *
+ * Policy: Studio generations count **accepted attempts** (work queued after
+ * ownership + ready-source checks). Pre-start rejections do not call this.
+ * Failures after accept are not refunded — regeneration still consumes.
+ *
  * Strategy: INSERT … ON CONFLICT DO UPDATE SET quantity = quantity + 1
  * WHERE quantity < limit, RETURNING. Zero rows means the limit was hit
- * (including under concurrent tabs). No refund if generation later fails.
+ * (including under concurrent tabs).
  */
 export async function assertAndConsumeStudioGeneration(
 	userId: string,

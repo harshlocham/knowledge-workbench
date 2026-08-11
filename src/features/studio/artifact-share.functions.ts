@@ -10,7 +10,7 @@ import {
 } from "#/features/studio/artifact-share.public.ts";
 import {
 	getArtifactByShareToken,
-	updateArtifactById,
+	updateArtifactFields,
 } from "#/features/studio/artifacts.store.server.ts";
 import {
 	createShareToken,
@@ -76,14 +76,10 @@ export const createArtifactShare = createServerFn({ method: "POST" })
 		}
 
 		const token = createShareToken();
-		const updated = await updateArtifactById(
-			artifact.id,
-			{
-				shareToken: token,
-				sharedAt: new Date(),
-			},
-			artifact,
-		);
+		const updated = await updateArtifactFields(artifact.id, {
+			shareToken: token,
+			sharedAt: new Date(),
+		});
 
 		// Re-read via DTO isShared; token is on the row we just wrote.
 		if (!updated.isShared) {
@@ -103,14 +99,10 @@ export const revokeArtifactShare = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<{ shared: false }> => {
 		const { artifact } = await requireOwnedArtifact(data.artifactId);
 
-		await updateArtifactById(
-			artifact.id,
-			{
-				shareToken: null,
-				sharedAt: null,
-			},
-			artifact,
-		);
+		await updateArtifactFields(artifact.id, {
+			shareToken: null,
+			sharedAt: null,
+		});
 
 		return { shared: false };
 	});
