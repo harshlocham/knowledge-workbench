@@ -1,5 +1,6 @@
 import type { ChunkLocator } from "#/db/schema/chunks.ts";
 import type { MessageCitation } from "#/db/schema/messages.ts";
+import { sectionLabel } from "#/lib/locator.ts";
 import { formatChunkClock } from "#/lib/rag/chunk-vtt.ts";
 
 /** One numbered excerpt handed to the model. Shared by every artifact generator. */
@@ -26,8 +27,9 @@ export function evidenceLabel(locator: ChunkLocator) {
 	if (typeof locator.page === "number") {
 		return ` (p. ${locator.page})`;
 	}
-	if (locator.heading) {
-		return ` — ${locator.heading}`;
+	const section = sectionLabel(locator);
+	if (section) {
+		return ` — ${section}`;
 	}
 	return "";
 }

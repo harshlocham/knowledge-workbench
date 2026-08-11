@@ -1,28 +1,60 @@
 import { chunkPlainText, type TextChunk } from "#/lib/rag/chunk.ts";
+import type { ArticleHeading } from "#/lib/rag/extract-url.server.ts";
 
 /**
- * Reuse the shared plain-text chunker, then attach URL + nearest preceding heading.
+ * Reuse the shared plain-text chunker, then attach the URL and the section the
+ * chunk sits in.
+ *
+ * Headings come from extraction rather than from re-parsing the flattened text,
+ * so a chunk keeps the heading level and DOM id needed to label a citation and
+ * to link back into the live page.
  */
 export function chunkArticleText(
 	content: string,
-	options: { url: string },
+	options: { url: string; headings?: readonly ArticleHeading[] },
 ): TextChunk[] {
-	return chunkPlainText(content).map((chunk) => ({
-		...chunk,
-		locator: {
-			...chunk.locator,
-			url: options.url,
-			heading: findHeadingBefore(content, chunk.locator.startOffset ?? 0),
-		},
-	}));
+	const headings = [...(options.headings ?? [])].sort(
+		(a, b) => a.offset - b.offset,
+	);
+
+	return chunkPlainText(content).map((chunk) => {
+		const heading = headingAt(headings, chunk.locator.startOffset ?? 0);
+
+		return {
+			...chunk,
+			locator: {
+				...chunk.locator,
+				url: options.url,
+				heading: heading?.text,
+				headingPath: heading ? headingPath(headings, heading) : undefined,
+				anchor: heading?.id,
+			},
+		};
+	});
 }
 
-function findHeadingBefore(
-	content: string,
-	offset: number,
-): string | undefined {
-	const before = content.slice(0, Math.max(0, offset));
-	const matches = [...before.matchAll(/^##\s+(.+)$/gm)];
-	const last = matches.at(-1)?.[1]?.trim();
-	return last || undefined;
+/** The last heading that opens at or before `offset`. */
+function headingAt(headings: ArticleHeading[], offset: number) {
+	let match: ArticleHeading | undefined;
+	for (const heading of headings) {
+		if (heading.offset > offset) break;
+		match = heading;
+	}
+	return match;
+}
+
+/** Walk back through progressively shallower headings to build the ancestry. */
+function headingPath(headings: ArticleHeading[], heading: ArticleHeading) {
+	const path = [heading.text];
+	let level = heading.level;
+
+	for (let i = headings.indexOf(heading) - 1; i >= 0; i--) {
+		const candidate = headings[i];
+		if (!candidate || candidate.level >= level) continue;
+		path.unshift(candidate.text);
+		level = candidate.level;
+		if (level === 1) break;
+	}
+
+	return path;
 }

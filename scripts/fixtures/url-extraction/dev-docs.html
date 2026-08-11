@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>createCache — API Reference</title>
+	</head>
+	<body>
+		<nav class="breadcrumbs">
+			<a href="/api">API</a>
+			<a href="/api/cache">Cache</a>
+		</nav>
+
+		<main>
+			<article>
+				<h1 id="createcache">createCache</h1>
+
+				<p>
+					Creates a cache instance. The returned object owns its own entry map,
+					so two instances never share state. Call <code>createCache</code> once
+					per application and pass the result down through context.
+				</p>
+
+				<h2 id="signature">Signature</h2>
+
+				<pre><code class="language-ts">export function createCache(options: CacheOptions): Cache {
+	const entries = new Map&lt;string, Entry&gt;();
+
+	return {
+		get(key) {
+			return entries.get(key)?.value;
+		},
+		set(key, value) {
+			entries.set(key, { value, storedAt: Date.now() });
+		},
+	};
+}</code></pre>
+
+				<h2 id="options">Options</h2>
+
+				<p>
+					Every option is optional. The defaults are tuned for a single page
+					application that navigates frequently between a small number of
+					routes.
+				</p>
+
+				<table>
+					<thead>
+						<tr>
+							<th>Option</th>
+							<th>Type</th>
+							<th>Default</th>
+							<th>Description</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>maxEntries</td>
+							<td>number</td>
+							<td>500</td>
+							<td>Entries kept before the least recently used one is dropped.</td>
+						</tr>
+						<tr>
+							<td>staleTime</td>
+							<td>number</td>
+							<td>0</td>
+							<td>Milliseconds an entry is served without a background refetch.</td>
+						</tr>
+						<tr>
+							<td>onEvict</td>
+							<td>function</td>
+							<td>undefined</td>
+							<td>Called with the key and value whenever an entry is removed.</td>
+						</tr>
+					</tbody>
+				</table>
+
+				<h2 id="usage">Usage</h2>
+
+				<p>
+					Wire the instance into the provider at the root of the tree. The
+					<code>staleTime</code> value below keeps results warm for a minute.
+				</p>
+
+				<pre><code class="language-tsx">const cache = createCache({
+	maxEntries: 1000,
+	staleTime: 60_000,
+});
+
+export function App() {
+	return (
+		&lt;CacheProvider value={cache}&gt;
+			&lt;Routes /&gt;
+		&lt;/CacheProvider&gt;
+	);
+}</code></pre>
+			</article>
+		</main>
+
+		<footer>
+			<p>API reference generated from source.</p>
+		</footer>
+	</body>
+</html>

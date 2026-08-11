@@ -1,6 +1,7 @@
 import { formatCompactTime } from "#/components/notebook/source-viewer/format.ts";
 import { citationKey } from "#/components/workspace/MarkdownWithCitations.tsx";
 import type { MessageCitation } from "#/db/schema/messages.ts";
+import { sectionLabel } from "#/lib/locator.ts";
 import { cn } from "#/lib/utils.ts";
 
 /** Stored YouTube cues may still be ms from before timing normalization. */
@@ -31,6 +32,7 @@ export function CitationChips({
 		<div className={cn("flex flex-wrap gap-1.5", className)}>
 			{citations.map((citation) => {
 				const key = citationKey(ownerId, citation);
+				const section = sectionLabel(citation.locator);
 				return (
 					<button
 						key={key}
@@ -53,6 +55,7 @@ export function CitationChips({
 						{citation.locator?.tStart != null
 							? ` · ${formatCitationClock(citation.locator.tStart)}`
 							: ""}
+						{section ? ` — ${section}` : ""}
 					</button>
 				);
 			})}

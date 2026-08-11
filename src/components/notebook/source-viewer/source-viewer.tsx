@@ -10,6 +10,7 @@ import {
 import { useEffect } from "react";
 
 import { Button } from "#/components/ui/button.tsx";
+import { sectionLabel } from "#/lib/locator.ts";
 import { cn } from "#/lib/utils.ts";
 
 import { formatViewerTime } from "./format.ts";
@@ -30,8 +31,9 @@ function locationLabel(source: ViewerSource) {
 	if (locator.page != null) {
 		parts.push(`page ${locator.page}`);
 	}
-	if (locator.heading) {
-		parts.push(locator.heading);
+	const section = sectionLabel(locator);
+	if (section) {
+		parts.push(section);
 	}
 	if (locator.tStart != null && locator.tEnd != null) {
 		parts.push(

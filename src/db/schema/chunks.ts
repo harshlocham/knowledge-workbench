@@ -25,6 +25,10 @@ export type ChunkLocator = {
 	endOffset?: number;
 	url?: string;
 	heading?: string;
+	/** Heading ancestry for the chunk, outermost first (web sources). */
+	headingPath?: string[];
+	/** DOM id of `heading`, used to deep-link back into the page. */
+	anchor?: string;
 	videoId?: string;
 	/** Start time in seconds (VTT / media) */
 	tStart?: number;
