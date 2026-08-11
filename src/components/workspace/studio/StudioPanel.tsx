@@ -7,6 +7,7 @@ import { Label } from "#/components/ui/label.tsx";
 import { ArtifactDocument } from "#/components/workspace/studio/ArtifactDocument.tsx";
 import {
 	ArtifactTypeCards,
+	compareSourcesNeedsMoreSources,
 	type StudioArtifactType,
 } from "#/components/workspace/studio/ArtifactTypeCards.tsx";
 import type { MessageCitation } from "#/db/schema/messages.ts";
@@ -84,7 +85,11 @@ export function StudioPanel({
 		generatingType === null &&
 		activeType != null &&
 		isGeneratable(activeType) &&
-		!pendingTypes.has(activeType);
+		!pendingTypes.has(activeType) &&
+		!(
+			activeType === "compare_sources" &&
+			compareSourcesNeedsMoreSources(readyCount)
+		);
 
 	function regenerate() {
 		if (activeType && isGeneratable(activeType)) {
@@ -127,6 +132,7 @@ export function StudioPanel({
 				</div>
 
 				<ArtifactTypeCards
+					readyCount={readyCount}
 					generatingType={generatingType}
 					pendingTypes={pendingTypes}
 					disabled={noEvidence || generatingType !== null}

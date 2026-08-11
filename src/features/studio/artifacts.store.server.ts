@@ -1,5 +1,5 @@
 import { notFound } from "@tanstack/react-router";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { db } from "#/db/index.ts";
 import { artifacts } from "#/db/schema/artifacts.ts";
@@ -9,7 +9,6 @@ import {
 	ARTIFACT_TYPE_LABELS,
 	type ArtifactContent,
 	type ArtifactDTO,
-	type ArtifactStatus,
 	type ArtifactSummaryDTO,
 	type ArtifactType,
 } from "./artifacts.types.ts";
@@ -196,69 +195,122 @@ export async function listArtifactsByNotebook(
 	return rows.map(toArtifactSummaryDTO);
 }
 
-export type ArtifactPatch = {
+/** Non-status fields callers may patch without changing generation state. */
+export type ArtifactFieldPatch = {
 	title?: string;
-	status?: ArtifactStatus;
-	content?: ArtifactContent | null;
-	citations?: MessageCitation[];
-	errorMessage?: string | null;
 	shareToken?: string | null;
 	sharedAt?: Date | null;
 };
 
 /**
- * Applies a partial update. A `ready` artifact must carry content, and a
- * `failed` artifact must carry an error message, so generation failures can
- * never be silently rendered as an empty success.
+ * Pure readiness gate for generators and unit tests. A ready artifact must
+ * carry content; citations must resolve against that content.
  */
-export async function updateArtifactById(
+export function assertReadyTransition(input: {
+	content: ArtifactContent | null | undefined;
+	citations: MessageCitation[];
+}) {
+	if (!input.content) {
+		throw new Error("A ready artifact must have content");
+	}
+	const citations = normalizeCitations(input.citations);
+	assertCitationsResolve(input.content, citations);
+	return { content: input.content, citations };
+}
+
+/** Pure failure gate — empty messages are not persistable failures. */
+export function assertFailedTransition(errorMessage: string) {
+	const trimmed = errorMessage.trim();
+	if (!trimmed) {
+		throw new Error("A failed artifact must have an error message");
+	}
+	if (trimmed.length > ARTIFACT_LIMITS.maxErrorLength) {
+		throw new Error(
+			`Error message exceeds ${ARTIFACT_LIMITS.maxErrorLength} characters`,
+		);
+	}
+	return trimmed;
+}
+
+/**
+ * Transitions pending/failed → ready with validated content. Already-ready rows
+ * are left unchanged (conditional UPDATE). Late jobs after a false timeout may
+ * still succeed from `failed`.
+ */
+export async function markArtifactReady(
 	artifactId: string,
-	patch: ArtifactPatch,
-	current: ArtifactRow,
+	input: {
+		title: string;
+		content: ArtifactContent;
+		citations: MessageCitation[];
+	},
+): Promise<ArtifactDTO | null> {
+	const { content, citations } = assertReadyTransition(input);
+
+	const [row] = await db
+		.update(artifacts)
+		.set({
+			status: "ready",
+			title: input.title,
+			content,
+			citations,
+			errorMessage: null,
+			updatedAt: new Date(),
+		})
+		.where(
+			and(
+				eq(artifacts.id, artifactId),
+				inArray(artifacts.status, ["pending", "failed"]),
+			),
+		)
+		.returning();
+
+	return row ? toArtifactDTO(row) : null;
+}
+
+/**
+ * Transitions pending → failed only. Never overwrites ready (or already-failed).
+ */
+export async function markArtifactFailedInStore(
+	artifactId: string,
+	errorMessage: string,
+): Promise<ArtifactDTO | null> {
+	const message = assertFailedTransition(errorMessage);
+
+	const [row] = await db
+		.update(artifacts)
+		.set({
+			status: "failed",
+			errorMessage: message,
+			updatedAt: new Date(),
+		})
+		.where(and(eq(artifacts.id, artifactId), eq(artifacts.status, "pending")))
+		.returning();
+
+	return row ? toArtifactDTO(row) : null;
+}
+
+/**
+ * Title / share-link fields only — cannot forge ready content or status.
+ */
+export async function updateArtifactFields(
+	artifactId: string,
+	patch: ArtifactFieldPatch,
 ): Promise<ArtifactDTO> {
+	if (
+		patch.title === undefined &&
+		patch.shareToken === undefined &&
+		patch.sharedAt === undefined
+	) {
+		throw new Error("No artifact fields to update");
+	}
+
 	const updates: Partial<typeof artifacts.$inferInsert> = {
 		updatedAt: new Date(),
 	};
 
-	const nextCitations =
-		patch.citations !== undefined
-			? normalizeCitations(patch.citations)
-			: (current.citations ?? []);
-
-	const nextContent =
-		patch.content !== undefined ? patch.content : (current.content ?? null);
-
-	const nextStatus = patch.status ?? current.status;
-
-	if (nextStatus === "ready" && !nextContent) {
-		throw new Error("A ready artifact must have content");
-	}
-
-	const nextError =
-		patch.errorMessage !== undefined
-			? patch.errorMessage
-			: current.errorMessage;
-
-	if (nextStatus === "failed" && !nextError) {
-		throw new Error("A failed artifact must have an error message");
-	}
-
-	assertCitationsResolve(nextContent, nextCitations);
-
 	if (patch.title !== undefined) {
 		updates.title = patch.title;
-	}
-	if (patch.status !== undefined) {
-		updates.status = patch.status;
-	}
-	if (patch.content !== undefined) {
-		updates.content = patch.content;
-	}
-	if (patch.citations !== undefined) {
-		updates.citations = nextCitations;
-	}
-	if (patch.errorMessage !== undefined) {
-		updates.errorMessage = patch.errorMessage;
 	}
 	if (patch.shareToken !== undefined) {
 		updates.shareToken = patch.shareToken;
