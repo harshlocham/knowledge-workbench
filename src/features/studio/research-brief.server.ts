@@ -6,8 +6,8 @@ import { friendlyIngestError } from "#/lib/ingest/limits.ts";
 import { spreadHitsAcrossSources } from "#/lib/rag/diversify-by-source.ts";
 import type { ScoredChunkHit } from "#/lib/rag/diversify-hits.ts";
 import {
-	generateResearchBrief,
 	type BriefEvidenceInput,
+	generateResearchBrief,
 } from "#/lib/rag/generate-research-brief.server.ts";
 import { retrieveHybridNotebookChunks } from "#/lib/rag/hybrid-retrieve.server.ts";
 import {
@@ -29,8 +29,23 @@ const BRIEF_PROBES = [
 ] as const;
 
 const PROBE_FINAL_LIMIT = 8;
-const MAX_EVIDENCE_PER_SOURCE = 6;
 const MAX_EVIDENCE_TOTAL = 32;
+const MIN_EVIDENCE_PER_SOURCE = 4;
+const MAX_EVIDENCE_PER_SOURCE = 12;
+
+/**
+ * An even share of the evidence budget per source. Combined with round-robin
+ * selection this means one source can only exceed its share once the others
+ * have run out of relevant chunks — i.e. only when it genuinely holds most of
+ * the evidence. A lone source still gets enough excerpts for a useful brief.
+ */
+function evidenceBudgetPerSource(sourceCount: number) {
+	const share = Math.ceil(MAX_EVIDENCE_TOTAL / Math.max(sourceCount, 1));
+	return Math.min(
+		MAX_EVIDENCE_PER_SOURCE,
+		Math.max(MIN_EVIDENCE_PER_SOURCE, share),
+	);
+}
 
 export async function listReadyNotebookSources(notebookId: string) {
 	return db
@@ -68,7 +83,7 @@ async function collectBriefEvidence(options: {
 	);
 
 	const spread = spreadHitsAcrossSources(lists, {
-		maxPerSource: MAX_EVIDENCE_PER_SOURCE,
+		maxPerSource: evidenceBudgetPerSource(options.sourceTitleById.size),
 		maxTotal: MAX_EVIDENCE_TOTAL,
 	});
 
@@ -131,7 +146,7 @@ export async function runResearchBriefGeneration(options: {
 
 		const brief = await generateResearchBrief({
 			evidence,
-			sourceCount: sourceTitleById.size,
+			readySourceCount: sourceTitleById.size,
 			notebookTitle: options.notebookTitle,
 			focus: options.focus,
 		});
