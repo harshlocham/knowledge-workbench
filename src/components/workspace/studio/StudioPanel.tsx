@@ -1,7 +1,6 @@
 import { AlertTriangle, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
 
 import { useBillingOptional } from "#/components/billing/BillingProvider.tsx";
-import { EmptyState } from "#/components/layout/EmptyState.tsx";
 import { Button } from "#/components/ui/button.tsx";
 import { Input } from "#/components/ui/input.tsx";
 import { Label } from "#/components/ui/label.tsx";
@@ -141,11 +140,33 @@ export function StudioPanel({
 				) : null}
 
 				{noEvidence && artifacts.length === 0 ? (
-					<EmptyState
-						icon={Sparkles}
-						title="No evidence yet"
-						description="Add and index at least one source, then generate an artifact grounded in it."
-					/>
+					<div className="rounded-xl border border-dashed border-border bg-card px-5 py-6">
+						<h3 className="font-[Fraunces,serif] text-lg font-semibold text-foreground">
+							Turn your sources into something useful.
+						</h3>
+						<p className="mt-1.5 text-sm text-muted-foreground">
+							Add and index sources, then generate a Studio artifact grounded in
+							them. Compare Sources needs at least two ready sources.
+						</p>
+						<ul className="mt-4 grid gap-2 text-sm text-foreground sm:grid-cols-2">
+							<li>
+								<span className="font-medium">Research Brief</span> — cited
+								summary of key findings
+							</li>
+							<li>
+								<span className="font-medium">Study Guide</span> — concepts,
+								examples, review questions
+							</li>
+							<li>
+								<span className="font-medium">Learning Roadmap</span> — ordered
+								path through the material
+							</li>
+							<li>
+								<span className="font-medium">Compare Sources</span> —
+								agreements, gaps, and tradeoffs
+							</li>
+						</ul>
+					</div>
 				) : null}
 
 				{artifacts.length > 0 ? (

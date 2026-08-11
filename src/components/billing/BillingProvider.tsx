@@ -14,6 +14,7 @@ import {
 	type BillingSummary,
 	getBillingSummary,
 } from "#/features/billing/billing.functions.ts";
+import { track } from "#/lib/analytics.ts";
 
 type BillingContextValue = {
 	summary: BillingSummary | null;
@@ -49,6 +50,7 @@ export function BillingProvider({ children }: { children: ReactNode }) {
 	}, [refresh]);
 
 	const openUpgrade = useCallback((source: UpgradeIntentSource) => {
+		track("upgrade_viewed", { source });
 		setUpgradeSource(source);
 		setUpgradeOpen(true);
 	}, []);

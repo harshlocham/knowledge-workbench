@@ -13,6 +13,7 @@ import {
 } from "#/components/ui/dialog.tsx";
 import type { UpgradeIntentSource } from "#/db/schema/upgrade-intents.ts";
 import { joinProWaitlist } from "#/features/billing/billing.functions.ts";
+import { track } from "#/lib/analytics.ts";
 import { PRO_PRICE_LABEL } from "#/lib/plans/limits.ts";
 
 const PRO_FEATURES = [
@@ -45,6 +46,7 @@ export function UpgradeModal({
 		setError(null);
 		try {
 			await joinFn({ data: { source } });
+			track("upgrade_intent", { source });
 			setJoined(true);
 		} catch (err) {
 			setError(
