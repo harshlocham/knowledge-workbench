@@ -40,7 +40,7 @@ src/
 │   ├── notebooks/
 │   ├── sources/
 │   ├── chat/
-│   └── roadmap/
+│   └── studio/              # Persisted Research Studio artifacts
 ├── lib/
 │   ├── auth.server.ts
 │   ├── rag/                 # Extract → chunk → embed → index → LLM
@@ -50,7 +50,7 @@ src/
 ├── db/schema/               # Postgres tables
 ├── components/
 │   ├── workspace/           # Three-panel notebook UI
-│   ├── notebook/            # Source viewers, roadmap
+│   ├── notebook/            # Source viewers
 │   └── dashboard/
 └── integrations/            # Clerk, TanStack Query
 ```
@@ -278,9 +278,11 @@ Eval: `bun run eval:rag -- --notebook <uuid>` (`scripts/eval-rag.ts`).
 
 After indexing, `tryPostSourceAddedSummaryMessage` posts a source overview into chat before status becomes `ready`.
 
-### Learning roadmap
+### Research Studio artifacts
 
-`buildLearningRoadmap` (`src/features/roadmap/roadmap.functions.ts`) builds a structured learning path from YouTube transcript chunks via `src/lib/rag/generate-roadmap.server.ts`.
+Research Brief, Study Guide and Learning Roadmap share one pipeline: per-type probes through `collectArtifactEvidence` (`src/lib/rag/artifact-evidence.server.ts`), a generator in `src/lib/rag/generate-*.server.ts` that returns evidence indexes, and `createCitationMapper` (`src/lib/rag/artifact-citations.ts`) turning those into `MessageCitation[]` so artifacts reuse the chat jump-to-source path.
+
+Each type has a server function that inserts a `pending` row and enqueues generation (`enqueueBackgroundJob`), plus an orchestrator that moves the row to `ready` or `failed` — for example `generateLearningRoadmapArtifact` and `runLearningRoadmapGeneration` in `src/features/studio/`. Rows persist in the `artifacts` table, so artifacts survive a refresh and load through the notebook route loader.
 
 ---
 
@@ -301,8 +303,8 @@ flowchart TB
 | Panel | Components | Role |
 |-------|------------|------|
 | Left | `SourcesSidebar`, `SourceCard`, `AddSourceSheet` | List / add / delete sources |
-| Center | `ChatPanel`, `ChatBubble`, `ChatComposer`, `CitationBadge` | Grounded Q&A |
-| Right | `ViewerTabs` → Source / Summary / Learn / Metadata | Inspect citations and tools |
+| Center | Chat mode (`ChatPanel`, `ChatBubble`, `ChatComposer`, `CitationBadge`) and Studio mode (`StudioPanel`, `ArtifactDocument`) | Grounded Q&A and artifacts |
+| Right | `ViewerTabs` → Source / Summary / Metadata | Inspect citations and tools |
 
 Layout widths persist in `localStorage` via `useWorkspaceLayout`. Mobile uses sheets for sources and tools.
 
@@ -333,7 +335,7 @@ which polls source status (~1s) until nothing is pending, then refreshes message
 | Notebooks | `notebooks.functions.ts` | `listNotebooks`, `getNotebook`, `createNotebook`, `updateNotebook`, `deleteNotebook`, `getAuthSession` |
 | Sources | `sources.functions.ts` | `listSources`, `create*Source`, `reindexSource`, `deleteSource`, `getSourceFile` |
 | Chat | `chat.functions.ts` + `ask-notebook.server.ts` | `listMessages`, `askNotebook`, SSE `ask` route, `getSourceViewer` |
-| Roadmap | `roadmap.functions.ts` | `buildLearningRoadmap` |
+| Studio | `artifacts.functions.ts`, `research-brief.functions.ts`, `study-guide.functions.ts`, `learning-roadmap.functions.ts` | `listArtifacts`, `getArtifact`, `deleteArtifact`, `generateResearchBriefArtifact`, `generateStudyGuideArtifact`, `generateLearningRoadmapArtifact` |
 
 ---
 

@@ -12,7 +12,10 @@ import { Button } from "#/components/ui/button.tsx";
 import type { ArtifactType } from "#/features/studio/artifacts.types.ts";
 
 /** The artifact types the Studio can generate today. */
-export type StudioArtifactType = "research_brief" | "study_guide";
+export type StudioArtifactType =
+	| "research_brief"
+	| "study_guide"
+	| "learning_roadmap";
 
 type CardCopy = {
 	icon: LucideIcon;
@@ -48,8 +51,8 @@ const CARDS: CardSpec[] = [
 		icon: Route,
 		title: "Learning Roadmap",
 		description:
-			"A sequenced path through your sources. Video roadmaps live in the Learn tab for now.",
-		available: false,
+			"Sequence your sources into an ordered path from fundamentals to advanced.",
+		available: true,
 	},
 	{
 		type: "compare_sources",

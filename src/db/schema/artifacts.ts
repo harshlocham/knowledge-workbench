@@ -73,11 +73,39 @@ export type StudyGuideData = {
 	reviewQuestions: StudyGuideReviewQuestion[];
 };
 
+/**
+ * One ordered step of a learning roadmap. `prerequisiteSteps` and
+ * `estimatedEffort` are optional because the sources often establish neither —
+ * omitting them is correct, guessing them is not.
+ */
+export type RoadmapStep = {
+	order: number;
+	title: string;
+	description: string;
+	whyItMatters: string;
+	/** `order` values of earlier steps the evidence says must come first. */
+	prerequisiteSteps?: number[];
+	/** Free text such as "about 40 minutes of video". */
+	estimatedEffort?: string;
+	citationNumbers: number[];
+};
+
+/**
+ * Structured Learning Roadmap payload, kept alongside the generic `sections`
+ * projection so the UI can render step ordering, prerequisites and effort
+ * without re-parsing markdown.
+ */
+export type LearningRoadmapData = {
+	steps: RoadmapStep[];
+};
+
 export type ArtifactContent = {
 	summary?: string;
 	sections: ArtifactSection[];
 	/** Present on `study_guide` artifacts only. */
 	studyGuide?: StudyGuideData;
+	/** Present on `learning_roadmap` artifacts only. */
+	learningRoadmap?: LearningRoadmapData;
 };
 
 export const artifacts = pgTable(

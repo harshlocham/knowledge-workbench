@@ -22,6 +22,7 @@ import { cn } from "#/lib/utils.ts";
 const GENERATABLE_TYPES = new Set<ArtifactType>([
 	"research_brief",
 	"study_guide",
+	"learning_roadmap",
 ]);
 
 function isGeneratable(type: ArtifactType): type is StudioArtifactType {

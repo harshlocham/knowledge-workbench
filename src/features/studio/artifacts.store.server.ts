@@ -89,25 +89,27 @@ function assertCitationsResolve(
 	}
 
 	const guide = content.studyGuide;
-	if (!guide) {
-		return;
+	if (guide) {
+		for (const item of [
+			...guide.prerequisites,
+			...guide.examples,
+			...guide.pitfalls,
+		]) {
+			assertResolves(`Study guide item "${item.title}"`, item.citationNumbers);
+		}
+		for (const concept of guide.concepts) {
+			assertResolves(`Concept "${concept.name}"`, concept.citationNumbers);
+		}
+		for (const question of guide.reviewQuestions) {
+			assertResolves(
+				`Review question "${question.question}"`,
+				question.citationNumbers,
+			);
+		}
 	}
 
-	for (const item of [
-		...guide.prerequisites,
-		...guide.examples,
-		...guide.pitfalls,
-	]) {
-		assertResolves(`Study guide item "${item.title}"`, item.citationNumbers);
-	}
-	for (const concept of guide.concepts) {
-		assertResolves(`Concept "${concept.name}"`, concept.citationNumbers);
-	}
-	for (const question of guide.reviewQuestions) {
-		assertResolves(
-			`Review question "${question.question}"`,
-			question.citationNumbers,
-		);
+	for (const step of content.learningRoadmap?.steps ?? []) {
+		assertResolves(`Roadmap step "${step.title}"`, step.citationNumbers);
 	}
 }
 

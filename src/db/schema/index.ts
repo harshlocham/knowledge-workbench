@@ -5,6 +5,8 @@ export {
 	artifactTypeEnum,
 	type ArtifactContent,
 	type ArtifactSection,
+	type LearningRoadmapData,
+	type RoadmapStep,
 	type StudyGuideCitedItem,
 	type StudyGuideConcept,
 	type StudyGuideData,
