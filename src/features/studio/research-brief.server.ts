@@ -5,7 +5,7 @@ import { markArtifactFailed } from "./artifact-generation.server.ts";
 import { listReadyNotebookSources } from "./artifact-sources.server.ts";
 import {
 	getArtifactRowById,
-	updateArtifactById,
+	markArtifactReady,
 } from "./artifacts.store.server.ts";
 
 /**
@@ -74,17 +74,11 @@ export async function runResearchBriefGeneration(options: {
 			return;
 		}
 
-		await updateArtifactById(
-			artifactId,
-			{
-				status: "ready",
-				title: brief.title,
-				content: brief.content,
-				citations: brief.citations,
-				errorMessage: null,
-			},
-			row,
-		);
+		await markArtifactReady(artifactId, {
+			title: brief.title,
+			content: brief.content,
+			citations: brief.citations,
+		});
 	} catch (error) {
 		console.error("[research-brief] generation failed", error);
 		await markArtifactFailed(

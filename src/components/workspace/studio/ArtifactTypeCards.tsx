@@ -18,6 +18,11 @@ export type StudioArtifactType =
 	| "learning_roadmap"
 	| "compare_sources";
 
+/** Pure UI gate — server still enforces ≥2 ready sources authoritatively. */
+export function compareSourcesNeedsMoreSources(readyCount: number) {
+	return readyCount < 2;
+}
+
 type CardCopy = {
 	icon: LucideIcon;
 	title: string;
@@ -66,17 +71,22 @@ const CARDS: CardSpec[] = [
 ];
 
 export function ArtifactTypeCards({
+	readyCount,
 	generatingType,
 	pendingTypes,
 	disabled,
 	onGenerate,
 }: {
+	readyCount: number;
 	generatingType: StudioArtifactType | null;
 	/** Types with an artifact already generating in the background. */
 	pendingTypes: Set<ArtifactType>;
+	/** Global disable (e.g. zero ready sources, or a create request in flight). */
 	disabled: boolean;
 	onGenerate: (type: StudioArtifactType) => void;
 }) {
+	const compareNeedsMore = compareSourcesNeedsMoreSources(readyCount);
+
 	return (
 		<div className="grid gap-3 sm:grid-cols-2">
 			{CARDS.map((card) => {
@@ -84,6 +94,9 @@ export function ArtifactTypeCards({
 				const isBusy =
 					card.available &&
 					(generatingType === card.type || pendingTypes.has(card.type));
+				const compareBlocked =
+					card.available && card.type === "compare_sources" && compareNeedsMore;
+				const cardDisabled = disabled || isBusy || compareBlocked;
 
 				return (
 					<article
@@ -118,20 +131,27 @@ export function ArtifactTypeCards({
 						</p>
 
 						{card.available ? (
-							<Button
-								type="button"
-								size="sm"
-								className="mt-3 self-start"
-								disabled={disabled || isBusy}
-								onClick={() => onGenerate(card.type)}
-							>
-								{isBusy ? (
-									<LoaderCircle className="animate-spin" />
-								) : (
-									<Sparkles />
-								)}
-								{isBusy ? "Generating…" : "Generate"}
-							</Button>
+							<>
+								{compareBlocked ? (
+									<p className="mt-2 text-xs text-muted-foreground">
+										Requires 2+ ready sources
+									</p>
+								) : null}
+								<Button
+									type="button"
+									size="sm"
+									className="mt-3 self-start"
+									disabled={cardDisabled}
+									onClick={() => onGenerate(card.type)}
+								>
+									{isBusy ? (
+										<LoaderCircle className="animate-spin" />
+									) : (
+										<Sparkles />
+									)}
+									{isBusy ? "Generating…" : "Generate"}
+								</Button>
+							</>
 						) : null}
 					</article>
 				);

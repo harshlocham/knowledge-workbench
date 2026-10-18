@@ -6,7 +6,7 @@ import { markArtifactFailed } from "./artifact-generation.server.ts";
 import { listReadyNotebookSources } from "./artifact-sources.server.ts";
 import {
 	getArtifactRowById,
-	updateArtifactById,
+	markArtifactReady,
 } from "./artifacts.store.server.ts";
 
 /**
@@ -110,17 +110,11 @@ export async function runLearningRoadmapGeneration(options: {
 			return;
 		}
 
-		await updateArtifactById(
-			artifactId,
-			{
-				status: "ready",
-				title: roadmap.title,
-				content: roadmap.content,
-				citations: roadmap.citations,
-				errorMessage: null,
-			},
-			row,
-		);
+		await markArtifactReady(artifactId, {
+			title: roadmap.title,
+			content: roadmap.content,
+			citations: roadmap.citations,
+		});
 	} catch (error) {
 		console.error("[learning-roadmap] generation failed", error);
 		await markArtifactFailed(

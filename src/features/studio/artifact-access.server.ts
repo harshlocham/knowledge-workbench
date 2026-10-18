@@ -1,5 +1,5 @@
-import { and, eq } from "drizzle-orm";
 import { notFound } from "@tanstack/react-router";
+import { and, eq } from "drizzle-orm";
 
 import { db } from "#/db/index.ts";
 import { artifacts } from "#/db/schema/artifacts.ts";

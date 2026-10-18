@@ -5,7 +5,7 @@ import { markArtifactFailed } from "./artifact-generation.server.ts";
 import { listReadyNotebookSources } from "./artifact-sources.server.ts";
 import {
 	getArtifactRowById,
-	updateArtifactById,
+	markArtifactReady,
 } from "./artifacts.store.server.ts";
 
 /**
@@ -77,17 +77,11 @@ export async function runStudyGuideGeneration(options: {
 			return;
 		}
 
-		await updateArtifactById(
-			artifactId,
-			{
-				status: "ready",
-				title: guide.title,
-				content: guide.content,
-				citations: guide.citations,
-				errorMessage: null,
-			},
-			row,
-		);
+		await markArtifactReady(artifactId, {
+			title: guide.title,
+			content: guide.content,
+			citations: guide.citations,
+		});
 	} catch (error) {
 		console.error("[study-guide] generation failed", error);
 		await markArtifactFailed(

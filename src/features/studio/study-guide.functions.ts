@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { requireOwnedNotebook } from "#/features/sources/notebook-access.server.ts";
 import { enqueueBackgroundJob } from "#/lib/ingest/jobs.server.ts";
+import { recoverStalePendingArtifacts } from "./artifact-recovery.server.ts";
 import { listReadyNotebookSources } from "./artifact-sources.server.ts";
 import { insertArtifact } from "./artifacts.store.server.ts";
 import type { ArtifactDTO } from "./artifacts.types.ts";
@@ -22,6 +23,7 @@ export const generateStudyGuideArtifact = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }): Promise<ArtifactDTO> => {
+		await recoverStalePendingArtifacts();
 		const { userId, notebook } = await requireOwnedNotebook(data.notebookId);
 
 		const readySources = await listReadyNotebookSources(data.notebookId);
